@@ -202,6 +202,12 @@ mod imp {
         pub danmaku_appsecret_row: TemplateChild<adw::PasswordEntryRow>,
 
         #[template_child]
+        pub danmaku_anime_row: TemplateChild<adw::EntryRow>,
+
+        #[template_child]
+        pub danmaku_episode_row: TemplateChild<adw::EntryRow>,
+
+        #[template_child]
         pub danmaku_top_padding_adj: TemplateChild<gtk::Adjustment>,
 
         #[template_child]
@@ -1512,6 +1518,66 @@ impl MPVPage {
         let _ = SETTINGS.set_danmaku_enabled(state);
 
         false
+    }
+
+    #[template_callback]
+    async fn on_danmaku_search_clicked(&self) {
+        if !self.key_vaild() {
+            self.imp().danmaku_page.set_description(&gettext(
+                "Danmaku credential is invalid. Set App ID and App Secret to continue.",
+            ));
+            return;
+        }
+
+        let Some(item) = self.current_video() else {
+            self.toast(gettext("No video is currently playing"));
+            return;
+        };
+
+        let (default_anime, default_episode) = if let Some(series_name) = item.series_name() {
+            (series_name, item.name())
+        } else {
+            (item.name(), "movie".to_string())
+        };
+
+        let anime = {
+            let input = self.imp().danmaku_anime_row.text().trim().to_string();
+            if input.is_empty() { default_anime } else { input }
+        };
+        let episode = {
+            let input = self.imp().danmaku_episode_row.text().trim().to_string();
+            if input.is_empty() {
+                default_episode
+            } else {
+                input
+            }
+        };
+        let time_milis = (item.playback_position_ticks() / 10000) as f64;
+
+        match self
+            .request_danmaku(dandanapi::RequestEpisodes {
+                anime,
+                episode,
+                tmdb_id: None,
+            })
+            .await
+        {
+            Ok(danmaku) => {
+                self.imp().danmaku_page.set_description(&format!(
+                    "{} {}",
+                    danmaku.len(),
+                    gettext("Danmaku Loaded")
+                ));
+                self.imp().init_danmaku(danmaku, time_milis);
+            }
+            Err(e) => {
+                tracing::error!("Manual danmaku search error: {}", e);
+                self.imp()
+                    .danmaku_page
+                    .set_description(&gettext("No Danmaku Loaded"));
+                self.toast(gettext("No Danmaku Loaded"));
+            }
+        }
     }
 
     #[template_callback]
