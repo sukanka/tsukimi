@@ -1290,6 +1290,10 @@ impl MPVPage {
 
     #[template_callback]
     fn left_click_cb(&self) {
+        if self.imp().danmaku_button.is_active() {
+            self.imp().danmaku_popover.popdown();
+            return;
+        }
         self.imp().video.pause();
     }
 
