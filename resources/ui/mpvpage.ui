@@ -623,11 +623,24 @@
                     </child>
                     <child>
                       <object class="AdwPreferencesGroup">
-                        <property name="title" translatable="yes">Search danmaku manually (Not available yet)</property>
+                        <property name="title" translatable="yes">Search danmaku manually</property>
                         <property name="sensitive" bind-source="danmaku_switch" bind-property="active" bind-flags="sync-create"/>
+                        <child>
+                          <object class="AdwEntryRow" id="danmaku_anime_row">
+                            <property name="title" translatable="yes">Anime</property>
+                            <property name="show-apply-button">false</property>
+                          </object>
+                        </child>
+                        <child>
+                          <object class="AdwEntryRow" id="danmaku_episode_row">
+                            <property name="title" translatable="yes">Episode</property>
+                            <property name="show-apply-button">false</property>
+                          </object>
+                        </child>
                         <child>
                           <object class="AdwButtonRow">
                             <property name="title" translatable="yes">Search</property>
+                            <signal name="activated" handler="on_danmaku_search_clicked" swapped="yes"/>
 
                             <property name="start-icon-name">edit-find-symbolic</property>
                             <style>
