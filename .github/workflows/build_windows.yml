@@ -165,6 +165,7 @@ jobs:
             artifact/*.sha512sum
           compression-level: 0
           if-no-files-found: error
+          retention-days: 30
 
       - name: Post Setup sccache
         run: |
