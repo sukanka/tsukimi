@@ -37,6 +37,7 @@ jobs:
       - name: Set pkgver for CI (Arch Linux)
         run: |
           cd "$GITHUB_WORKSPACE"
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
           CI_PKGVER="$(echo $(grep '^version =' Cargo.toml | head -n1 | cut -d\" -f2).r$(git rev-list --count HEAD).g$(git describe --long --tags --abbrev=7 | tail -c 7))"
           sed -i "s/^pkgver=.*/pkgver=${CI_PKGVER}/" PKGBUILD
           grep '^pkgver=' PKGBUILD
@@ -71,3 +72,4 @@ jobs:
           name: tsukimi-${{ matrix.platform }}-archlinux-linux
           path: |
             *.pkg.tar.zst
+          retention-days: 30
