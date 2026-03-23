@@ -1,0 +1,44 @@
+_pkgname="tsukimi"
+pkgname="${_pkgname}-git"
+pkgver=25.5.0.r1336.g232958
+pkgrel=1
+pkgdesc='A simple third-party Emby client'
+arch=('x86_64')
+url="https://github.com/tsukinaha/tsukimi"
+license=('GPL-3.0-or-later')
+provides=('tsukimi')
+conflicts=('tsukimi')
+depends=(
+  'mpv'
+  'ffmpeg'
+  'libadwaita'
+  'gstreamer'
+  'gtk4'
+)
+makedepends=(
+  'cargo-nightly'
+  'git'
+  'meson'
+)
+source=(
+  # git+https://github.com/tsukinaha/tsukimi.git
+  tsukimi-src.tar.gz
+)
+sha256sums=(
+  'SKIP'
+)
+options=(!lto)
+
+_pkgver() {
+  cd "${_pkgname}"
+  echo $(grep '^version =' Cargo.toml | head -n1 | cut -d\" -f2).r$(git rev-list --count HEAD).g$(git describe --long --tags --abbrev=7 | tail -c 7)
+}
+
+build() {
+  arch-meson "${srcdir}/${_pkgname}" build
+  meson compile -C build
+}
+
+package() {
+  meson install -C build --no-rebuild --destdir "$pkgdir"
+}
