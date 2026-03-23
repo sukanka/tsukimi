@@ -32,9 +32,14 @@ jobs:
     uses: ./.github/workflows/cargo_clippy_check.yaml
     secrets: inherit
 
-  linux:
-    name: Linux
+  linux_ubuntu:
+    name: Linux (Ubuntu)
     uses: ./.github/workflows/build_linux.yml
+    secrets: inherit
+  
+  linux_archlinux:
+    name: Linux (Arch Linux)
+    uses: ./.github/workflows/build_archlinux.yml
     secrets: inherit
 
   windows:
@@ -46,5 +51,5 @@ jobs:
     name: Artifacts
     if: ${{ github.event_name != 'pull_request' }}
     uses: ./.github/workflows/artifacts.yml
-    needs: [linux, windows]
+    needs: [linux_ubuntu, linux_archlinux, windows]
     secrets: inherit

@@ -1,0 +1,73 @@
+name: Arch Linux
+on:
+  workflow_call:
+
+jobs:
+  build:
+    name: Build (${{ matrix.platform }} / archlinux)
+
+    strategy:
+      matrix:
+        include:
+          - platform: amd64
+            os: ubuntu-latest
+
+    container:
+      image: archlinux:latest
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - name: Install dependencies
+        run: |
+          pacman-key --init
+          pacman -Sy --noconfirm archlinux-keyring
+          printf '\n[archlinuxcn]\nServer = https://repo.archlinuxcn.org/$arch\n' >> /etc/pacman.conf
+          pacman -Sy --noconfirm archlinuxcn-keyring
+          pacman -Syu --noconfirm
+          pacman -S --noconfirm --needed base-devel sudo git
+
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          submodules: true
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Set pkgver for CI (Arch Linux)
+        run: |
+          cd "$GITHUB_WORKSPACE"
+          CI_PKGVER="$(echo $(grep '^version =' Cargo.toml | head -n1 | cut -d\" -f2).r$(git rev-list --count HEAD).g$(git describe --long --tags --abbrev=7 | tail -c 7))"
+          sed -i "s/^pkgver=.*/pkgver=${CI_PKGVER}/" PKGBUILD
+          grep '^pkgver=' PKGBUILD
+
+      - name: Write DANDANAPI secret key (Arch Linux)
+        env:
+          DANDANAPI_SECRET_KEY: ${{ secrets.DANDANAPI_SECRET_KEY }}
+        run: |
+          echo $DANDANAPI_SECRET_KEY > secret/key
+
+      - name: Prepare source tarball (Arch Linux)
+        run: |
+          rm -f /tmp/tsukimi-src.tar.gz tsukimi-src.tar.gz
+          tar --exclude=./target --exclude=./.git -czf /tmp/tsukimi-src.tar.gz --transform 's,^\.,tsukimi,' .
+          mv /tmp/tsukimi-src.tar.gz ./tsukimi-src.tar.gz
+
+      - name: Build tsukimi package for ${{ matrix.platform }}
+        run: |
+          useradd -m builder
+          echo "builder ALL=(ALL) NOPASSWD: ALL" > /etc/sudoers.d/builder
+          chmod 440 /etc/sudoers.d/builder
+          rm -rf /tmp/pkgbuild
+          mkdir -p /tmp/pkgbuild
+          cp PKGBUILD tsukimi-src.tar.gz /tmp/pkgbuild/
+          chown -R builder:builder /tmp/pkgbuild
+          su -m builder -c "cd /tmp/pkgbuild && makepkg --noconfirm --syncdeps --cleanbuild --clean --holdver"
+          cp /tmp/pkgbuild/*.pkg.tar.zst "$GITHUB_WORKSPACE"/
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: tsukimi-${{ matrix.platform }}-archlinux-linux
+          path: |
+            *.pkg.tar.zst
