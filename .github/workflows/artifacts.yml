@@ -62,5 +62,59 @@ jobs:
           uses: softprops/action-gh-release@v2
           with:
             files: |
-              *.tgz
+              artifacts-linux/*.tgz
+              artifacts-linux/**/*.pkg.tar.zst
+              artifacts-linux/**/*.deb
+              artifacts-linux/**/*.rpm
+              artifacts-linux/**/*.AppImage
+              artifacts-linux/**/*.exe
+              artifacts-linux/**/*.7z
+              artifacts-linux/**/*.msi
+              artifacts-linux/**/*.sha512sum
             prerelease: ${{ github.ref_type == 'tag' && contains(github.ref_name, 'rc') }}
+
+    nightly:
+      name: Nightly Release
+      runs-on: ubuntu-latest
+      if: github.event_name == 'push' && github.ref_name == 'master'
+      steps:
+        - name: Download artifact
+          uses: actions/download-artifact@v6
+          with:
+            path: nightly-artifacts
+
+        - name: Create compressed files
+          run: |
+            cd nightly-artifacts
+            for d in $(ls -d */); do
+              if [[ "$d" == *-linux/ ]]; then
+                tar --posix -czf "${d%/}.tgz" "$d"
+              fi
+            done
+
+        - name: Create nightly metadata
+          run: |
+            echo "NIGHTLY_DATE=$(date -u +%Y-%m-%d)" >> "$GITHUB_ENV"
+            echo "NIGHTLY_SHA=${GITHUB_SHA::7}" >> "$GITHUB_ENV"
+
+        - name: Publish nightly release
+          uses: softprops/action-gh-release@v2
+          with:
+            tag_name: nightly
+            name: Nightly ${{ env.NIGHTLY_DATE }}
+            prerelease: true
+            make_latest: false
+            target_commitish: ${{ github.sha }}
+            files: |
+              nightly-artifacts/*.tgz
+              nightly-artifacts/**/*.pkg.tar.zst
+              nightly-artifacts/**/*.deb
+              nightly-artifacts/**/*.rpm
+              nightly-artifacts/**/*.AppImage
+              nightly-artifacts/**/*.7z
+              nightly-artifacts/**/*.exe
+              nightly-artifacts/**/*.msi
+              nightly-artifacts/**/*.sha512sum
+            body: |
+              Automated nightly build from `master`
+              Commit: ${{ env.NIGHTLY_SHA }}
