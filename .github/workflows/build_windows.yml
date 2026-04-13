@@ -147,3 +147,8 @@ jobs:
           path: artifact/*.7z
           archive: false
           if-no-files-found: error
+          retention-days: 30
+
+      - name: Post Setup sccache
+        run: |
+          sccache --stop-server

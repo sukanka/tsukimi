@@ -56,3 +56,4 @@ jobs:
             target/release/tsukimi
             i18n/locale
             resources/moe*.xml
+          retention-days: 30

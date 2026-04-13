@@ -196,6 +196,18 @@ mod imp {
         pub danmaku_switch: TemplateChild<gtk::Switch>,
 
         #[template_child]
+        pub danmaku_appid_row: TemplateChild<adw::EntryRow>,
+
+        #[template_child]
+        pub danmaku_appsecret_row: TemplateChild<adw::PasswordEntryRow>,
+
+        #[template_child]
+        pub danmaku_anime_row: TemplateChild<adw::EntryRow>,
+
+        #[template_child]
+        pub danmaku_episode_row: TemplateChild<adw::EntryRow>,
+
+        #[template_child]
         pub danmaku_top_padding_adj: TemplateChild<gtk::Adjustment>,
 
         #[template_child]
@@ -319,6 +331,24 @@ mod imp {
             SETTINGS
                 .bind("is-danmaku-enabled", &self.danmaku_switch.get(), "active")
                 .build();
+
+            if SETTINGS.has_danmaku_custom_credentials_keys() {
+                SETTINGS
+                    .bind("danmaku-appid", &self.danmaku_appid_row.get(), "text")
+                    .build();
+
+                SETTINGS
+                    .bind(
+                        "danmaku-appsecret",
+                        &self.danmaku_appsecret_row.get(),
+                        "text",
+                    )
+                    .build();
+            } else {
+                tracing::warn!(
+                    "GSettings keys danmaku-appid/danmaku-appsecret not found, custom DanDan credentials disabled"
+                );
+            }
 
             self.danmaku_area
                 .set_enable_danmaku(SETTINGS.is_danmaku_enabled());
@@ -444,19 +474,36 @@ mod imp {
             self.paused.set(paused);
         }
 
-        fn init_dandanapi_client(&self) {
+        pub(super) fn init_dandanapi_client(&self) {
             use crate::client::*;
             use dandanapi::*;
 
-            let generator = SecretGenerator::new(
-                include_bytes!("../../../secret/secret").to_vec(),
-                SECRETE_KEY.to_string(),
-            );
+            // Prefer live UI input to avoid race with Settings binding propagation.
+            let appid_text = self.danmaku_appid_row.text().trim().to_string();
+            let appsecret_text = self.danmaku_appsecret_row.text().trim().to_string();
+            let has_custom_appid = !appid_text.is_empty();
+            let has_custom_appsecret = !appsecret_text.is_empty();
 
-            let Ok(()) = DanDanClient::init(X_APPID.to_string(), generator) else {
-                self.danmaku_page
-                    .set_description(&gettext("Danmaku feature requires an official build"));
-                self.danmaku_popover.set_sensitive(false);
+            let init_result = if has_custom_appid && has_custom_appsecret {
+                DanDanClient::init(appid_text, appsecret_text)
+            } else if !has_custom_appid && !has_custom_appsecret {
+                let generator = SecretGenerator::new(
+                    include_bytes!("../../../secret/secret").to_vec(),
+                    SECRETE_KEY.to_string(),
+                );
+                DanDanClient::init(X_APPID.to_string(), generator)
+            } else {
+                self.danmaku_page.set_description(&gettext(
+                    "Please fill both App ID and App Secret, or leave both empty.",
+                ));
+                self.obj().set_key_vaild(false);
+                return;
+            };
+
+            let Ok(()) = init_result else {
+                self.danmaku_page.set_description(&gettext(
+                    "Danmaku credential is invalid. Set App ID and App Secret to continue.",
+                ));
                 self.obj().set_key_vaild(false);
                 return;
             };
@@ -1249,6 +1296,10 @@ impl MPVPage {
 
     #[template_callback]
     fn left_click_cb(&self) {
+        if self.imp().danmaku_button.is_active() {
+            self.imp().danmaku_popover.popdown();
+            return;
+        }
         self.imp().video.pause();
     }
 
@@ -1342,6 +1393,9 @@ impl MPVPage {
 
     pub async fn load_danmaku(&self) {
         if !self.key_vaild() {
+            self.imp().danmaku_page.set_description(&gettext(
+                "Danmaku credential is invalid. Set App ID and App Secret to continue.",
+            ));
             return;
         }
 
@@ -1464,6 +1518,158 @@ impl MPVPage {
         let _ = SETTINGS.set_danmaku_enabled(state);
 
         false
+    }
+
+    #[template_callback]
+    async fn on_danmaku_search_clicked(&self) {
+        if !self.key_vaild() {
+            self.imp().danmaku_page.set_description(&gettext(
+                "Danmaku credential is invalid. Set App ID and App Secret to continue.",
+            ));
+            return;
+        }
+
+        let Some(item) = self.current_video() else {
+            self.toast(gettext("No video is currently playing"));
+            return;
+        };
+
+        let (default_anime, default_episode) = if let Some(series_name) = item.series_name() {
+            (series_name, item.name())
+        } else {
+            (item.name(), "movie".to_string())
+        };
+
+        let anime = {
+            let input = self.imp().danmaku_anime_row.text().trim().to_string();
+            if input.is_empty() { default_anime } else { input }
+        };
+        let episode = {
+            let input = self.imp().danmaku_episode_row.text().trim().to_string();
+            if input.is_empty() {
+                default_episode
+            } else {
+                input
+            }
+        };
+        let time_milis = (item.playback_position_ticks() / 10000) as f64;
+
+        match self
+            .request_danmaku(dandanapi::RequestEpisodes {
+                anime,
+                episode,
+                tmdb_id: None,
+            })
+            .await
+        {
+            Ok(danmaku) => {
+                self.imp().danmaku_page.set_description(&format!(
+                    "{} {}",
+                    danmaku.len(),
+                    gettext("Danmaku Loaded")
+                ));
+                self.imp().init_danmaku(danmaku, time_milis);
+            }
+            Err(e) => {
+                tracing::error!("Manual danmaku search error: {}", e);
+                self.imp()
+                    .danmaku_page
+                    .set_description(&gettext("No Danmaku Loaded"));
+                self.toast(gettext("No Danmaku Loaded"));
+            }
+        }
+    }
+
+    #[template_callback]
+    pub fn on_danmaku_appid_changed(&self, _entry: &adw::EntryRow) {
+        self.auto_save_danmaku_credentials();
+    }
+
+    #[template_callback]
+    pub fn on_danmaku_appsecret_changed(&self, _entry: &adw::PasswordEntryRow) {
+        self.auto_save_danmaku_credentials();
+    }
+
+    fn auto_save_danmaku_credentials(&self) {
+        if !SETTINGS.has_danmaku_custom_credentials_keys() {
+            self.imp().danmaku_page.set_description(&gettext(
+                "Runtime schema is outdated. Please update schema first.",
+            ));
+            return;
+        }
+
+        let appid_text = self.imp().danmaku_appid_row.text().trim().to_string();
+        let appsecret_text = self.imp().danmaku_appsecret_row.text().trim().to_string();
+        let has_appid = !appid_text.is_empty();
+        let has_appsecret = !appsecret_text.is_empty();
+
+        if has_appid ^ has_appsecret {
+            return;
+        }
+
+        if SETTINGS.set_danmaku_appid(&appid_text).is_err()
+            || SETTINGS.set_danmaku_appsecret(&appsecret_text).is_err()
+        {
+            self.imp()
+                .danmaku_page
+                .set_description(&gettext("Failed to save danmaku credentials."));
+            return;
+        }
+
+        self.imp().init_dandanapi_client();
+
+        if !self.key_vaild() {
+            self.toast(gettext("Danmaku credentials are invalid."));
+            return;
+        }
+
+        let client = self
+            .imp()
+            .danmaku_client
+            .get()
+            .cloned()
+            .unwrap_or_else(dandanapi::DanDanClient::instance);
+
+        spawn(glib::clone!(
+            #[weak(rename_to = obj)]
+            self,
+            async move {
+                let verify_result = {
+                    let route = client.route(dandanapi::Episodes(dandanapi::RequestEpisodes {
+                        anime: "CredentialCheck".to_string(),
+                        episode: "1".to_string(),
+                        tmdb_id: None,
+                    }));
+                    spawn_tokio(async move {
+                        route.await?;
+                        Ok::<(), anyhow::Error>(())
+                    })
+                    .await
+                };
+
+                match verify_result {
+                    Ok(()) => {
+                        obj.toast(gettext("Danmaku credentials saved and verified."));
+                    }
+                    Err(_) => {
+                        obj.set_key_vaild(false);
+                        obj.toast(gettext(
+                            "Danmaku credentials are invalid (or network is unavailable).",
+                        ));
+                    }
+                }
+            }
+        ));
+
+        if self.key_vaild() && SETTINGS.is_danmaku_enabled() {
+            spawn(glib::clone!(
+                #[weak(rename_to = obj)]
+                self,
+                async move {
+                    obj.load_danmaku().await;
+                }
+            ));
+        }
     }
 
     pub fn notify_has_chapters(&self, has_chapters: bool) {
