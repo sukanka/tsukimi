@@ -28,6 +28,7 @@ pub mod metadata_dialog;
 pub mod missing_episodes_dialog;
 pub mod music_album;
 pub mod other;
+pub mod route_switcher;
 pub mod picture_loader;
 pub mod player_toolbar;
 pub mod refresh_dialog;

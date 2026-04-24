@@ -173,6 +173,17 @@
                                   </object>
                                 </child>
                                 <child>
+                                  <object class="GtkMenuButton" id="route_switch_button">
+                                    <property name="visible">False</property>
+                                    <property name="label" translatable="yes">Route</property>
+                                    <property name="tooltip-text" translatable="yes">Switch Route</property>
+                                    <property name="valign">center</property>
+                                    <style>
+                                      <class name="flat" />
+                                    </style>
+                                  </object>
+                                </child>
+                                <child>
                                   <object class="GtkWindowControls">
                                     <property name="side">end</property>
                                   </object>

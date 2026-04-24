@@ -159,8 +159,12 @@ impl Default for JellyfinClient {
 
 impl JellyfinClient {
     pub async fn init(&self, account: &Account) -> Result<(), Box<dyn std::error::Error>> {
-        self.header_change_url(&account.server, &account.port)
-            .await?;
+        self.header_change_url(
+            account.active_server(),
+            account.active_port(),
+            account.active_path(),
+        )
+        .await?;
         self.header_change_token(&account.access_token).await?;
         self.set_user_id(&account.user_id).await?;
         self.set_user_name(&account.username).await?;
@@ -187,12 +191,18 @@ impl JellyfinClient {
         Ok(())
     }
 
-    pub async fn header_change_url(&self, url: &str, port: &str) -> Result<()> {
+    pub async fn header_change_url(
+        &self, url: &str, port: &str, path: Option<&str>,
+    ) -> Result<()> {
         let mut url = Url::parse(url)?;
         url.set_port(Some(port.parse::<u16>().unwrap_or_default()))
             .map_err(|_| anyhow!("Failed to set port"))?;
+        let joined = match path.map(|p| p.trim().trim_matches('/')).filter(|p| !p.is_empty()) {
+            Some(p) => format!("{p}/emby/"),
+            None => "emby/".to_string(),
+        };
         let mut url_lock = self.url.lock().await;
-        *url_lock = Some(url.join("emby/")?);
+        *url_lock = Some(url.join(&joined)?);
         Ok(())
     }
 
@@ -1354,7 +1364,7 @@ mod tests {
     #[tokio::test]
     async fn search() {
         let _ = JELLYFIN_CLIENT
-            .header_change_url("https://example.com", "443")
+            .header_change_url("https://example.com", "443", None)
             .await;
         let result = JELLYFIN_CLIENT.login("test", "test").await;
         match result {
@@ -1398,7 +1408,7 @@ mod tests {
     #[tokio::test]
     async fn test_upload_image() {
         let _ = JELLYFIN_CLIENT
-            .header_change_url("http://127.0.0.1", "8096")
+            .header_change_url("http://127.0.0.1", "8096", None)
             .await;
         let result = JELLYFIN_CLIENT.login("inaha", "").await;
         match result {
@@ -1413,6 +1423,10 @@ mod tests {
                     user_id: response.user.id,
                     access_token: response.access_token,
                     server_type: Some("Jellyfin".to_string()),
+                    path: None,
+                    route_name: None,
+                    routes: Vec::new(),
+                    active_route: None,
                 };
                 let _ = JELLYFIN_CLIENT.init(&account).await;
             }

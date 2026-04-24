@@ -1435,6 +1435,18 @@ msgstr ""
 msgid "Subtitle: "
 msgstr ""
 
+#: resources/ui/item.ui:260
+msgid "Route: "
+msgstr ""
+
+#: resources/ui/item.ui:270
+msgid "Switch Route"
+msgstr ""
+
+#: src/ui/widgets/route_switcher.rs:45
+msgid "Route"
+msgstr ""
+
 #: resources/ui/item.ui:308
 msgid "View this season"
 msgstr ""

@@ -208,6 +208,13 @@
                                             <property name="action-name">win.relogin</property>
                                           </object>
                                         </child>
+                                        <child type="end">
+                                          <object class="GtkMenuButton" id="route_switch_button">
+                                            <property name="visible">false</property>
+                                            <property name="icon-name">network-transmit-receive-symbolic</property>
+                                            <property name="tooltip-text" translatable="yes">Switch Route</property>
+                                          </object>
+                                        </child>
                                       </object>
                                     </child>
                                     <child type="bottom">

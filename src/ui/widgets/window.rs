@@ -116,6 +116,9 @@ mod imp {
         #[template_child]
         pub avatar: TemplateChild<adw::Avatar>,
 
+        #[template_child]
+        pub route_switch_button: TemplateChild<gtk::MenuButton>,
+
         pub progress_bar_animation: OnceCell<adw::TimedAnimation>,
         pub progress_bar_fade_animation: OnceCell<adw::TimedAnimation>,
 
@@ -173,6 +176,16 @@ mod imp {
             klass.install_action("win.add-server", None, |obj, _, _| {
                 obj.new_account();
             });
+            klass.install_action(
+                "win.switch-route",
+                Some(&i32::static_variant_type()),
+                |obj, _, parameter| {
+                    let index = parameter
+                        .and_then(|p| p.get::<i32>())
+                        .unwrap_or(-1);
+                    obj.switch_route(index);
+                },
+            );
         }
 
         fn instance_init(obj: &InitializingObject<Self>) {
@@ -512,6 +525,63 @@ impl Window {
             .set_title(&JELLYFIN_CLIENT.user_name.lock().await);
         imp.namerow
             .set_subtitle(&JELLYFIN_CLIENT.server_name.lock().await);
+        self.update_route_switcher();
+    }
+
+    fn current_account(&self) -> Option<Account> {
+        crate::ui::widgets::route_switcher::current_account()
+    }
+
+    pub fn update_route_switcher(&self) {
+        let button = self.imp().route_switch_button.get();
+        crate::ui::widgets::route_switcher::refresh_route_switch_button(
+            &button,
+            self.current_account().as_ref(),
+        );
+
+        // Route switch removed from mpv page
+    }
+
+    pub fn switch_route(&self, index: i32) {
+        let Some(old_account) = self.current_account() else {
+            return;
+        };
+
+        let new_active = if index < 0 {
+            None
+        } else {
+            let i = index as usize;
+            if i >= old_account.routes.len() {
+                return;
+            }
+            Some(i)
+        };
+
+        if old_account.active_route == new_active {
+            return;
+        }
+
+        let mut new_account = old_account.clone();
+        new_account.active_route = new_active;
+
+        if let Err(e) = SETTINGS.edit_account(old_account.clone(), new_account.clone()) {
+            self.toast(format!("{}: {}", gettext("Failed to save account"), e));
+            return;
+        }
+
+        spawn(glib::clone!(
+            #[weak(rename_to = obj)]
+            self,
+            async move {
+                if let Err(e) = JELLYFIN_CLIENT.init(&new_account).await {
+                    obj.toast(format!("{}: {}", gettext("Failed to switch route"), e));
+                    let _ = JELLYFIN_CLIENT.init(&old_account).await;
+                    return;
+                }
+
+                obj.reset();
+            }
+        ));
     }
 
     pub fn account_settings(&self) {
