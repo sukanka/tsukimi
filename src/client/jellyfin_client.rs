@@ -440,7 +440,7 @@ impl JellyfinClient {
         let params = [
             (
                 "Fields",
-                "Overview,PrimaryImageAspectRatio,PremiereDate,ProductionYear,SyncStatus",
+                "Overview,PrimaryImageAspectRatio,PremiereDate,ProductionYear,SyncStatus,DateCreated",
             ),
             ("Limit", "50"),
             ("StartIndex", &start_index.to_string()),
@@ -456,7 +456,7 @@ impl JellyfinClient {
         let params = [
             (
                 "Fields",
-                "Overview,PrimaryImageAspectRatio,PremiereDate,ProductionYear,SyncStatus",
+                "Overview,PrimaryImageAspectRatio,PremiereDate,ProductionYear,SyncStatus,DateCreated",
             ),
             ("ImageTypeLimit", "1"),
             ("SeasonId", season_id),
@@ -467,7 +467,7 @@ impl JellyfinClient {
 
     pub async fn get_item_info(&self, id: &str) -> Result<SimpleListItem> {
         let path = format!("Users/{}/Items/{}", self.user_id().await, id);
-        let params = [("Fields", "ShareLevel")];
+        let params = [("Fields", "ShareLevel,DateCreated")];
         self.request(&path, &params).await
     }
 
@@ -488,7 +488,7 @@ impl JellyfinClient {
             ("Recursive", "true"),
             (
                 "Fields",
-                "Overview,BasicSyncInfo,CanDelete,PrimaryImageAspectRatio,ProductionYear,CommunityRating",
+                "Overview,BasicSyncInfo,CanDelete,PrimaryImageAspectRatio,ProductionYear,CommunityRating,DateCreated",
             ),
             ("EnableImageTypes", "Primary,Backdrop,Thumb,Banner"),
             ("ImageTypeLimit", "1"),
@@ -790,7 +790,7 @@ impl JellyfinClient {
                     ("Limit", "50"),
                     (
                         "Fields",
-                        "Overview,BasicSyncInfo,CanDelete,PrimaryImageAspectRatio,ProductionYear,Status,EndDate,CommunityRating",
+                        "Overview,BasicSyncInfo,CanDelete,PrimaryImageAspectRatio,ProductionYear,Status,EndDate,CommunityRating,DateCreated",
                     ),
                     ("ParentId", id),
                     ("ImageTypeLimit", "1"),
@@ -857,7 +857,7 @@ impl JellyfinClient {
             ("Limit", "50"),
             (
                 "Fields",
-                "Overview,BasicSyncInfo,CanDelete,PrimaryImageAspectRatio,ProductionYear,Status,EndDate,CommunityRating",
+                "Overview,BasicSyncInfo,CanDelete,PrimaryImageAspectRatio,ProductionYear,Status,EndDate,CommunityRating,DateCreated",
             ),
             ("ImageTypeLimit", "1"),
             ("StartIndex", &start_string),
@@ -932,7 +932,7 @@ impl JellyfinClient {
         let params = [
             (
                 "Fields",
-                "BasicSyncInfo,CanDelete,PrimaryImageAspectRatio,ProductionYear,Status,EndDate,CommunityRating",
+                "BasicSyncInfo,CanDelete,PrimaryImageAspectRatio,ProductionYear,Status,EndDate,CommunityRating,DateCreated",
             ),
             ("UserId", &self.user_id().await),
             ("ImageTypeLimit", "1"),
@@ -1048,7 +1048,7 @@ impl JellyfinClient {
         let mut params = vec![
             (
                 "Fields",
-                "BasicSyncInfo,CanDelete,PrimaryImageAspectRatio,ProductionYear,CommunityRating",
+                "BasicSyncInfo,CanDelete,PrimaryImageAspectRatio,ProductionYear,CommunityRating,DateCreated",
             ),
             ("Filters", "IsFavorite"),
             ("Recursive", "true"),
@@ -1095,7 +1095,7 @@ impl JellyfinClient {
         let params = [
             (
                 "Fields",
-                "BasicSyncInfo,CanDelete,PrimaryImageAspectRatio,ProductionYear,Status,EndDate,CommunityRating",
+                "BasicSyncInfo,CanDelete,PrimaryImageAspectRatio,ProductionYear,Status,EndDate,CommunityRating,DateCreated",
             ),
             ("ImageTypeLimit", "1"),
             ("ParentId", parent_id),
@@ -1116,7 +1116,7 @@ impl JellyfinClient {
         let mut params = vec![
             (
                 "Fields",
-                "BasicSyncInfo,CanDelete,PrimaryImageAspectRatio,ProductionYear,Status,EndDate,CommunityRating",
+                "BasicSyncInfo,CanDelete,PrimaryImageAspectRatio,ProductionYear,Status,EndDate,CommunityRating,DateCreated",
             ),
             ("StartIndex", &start_index_string),
             ("ImageTypeLimit", "1"),
