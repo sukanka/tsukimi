@@ -1457,6 +1457,18 @@ msgstr "视频： "
 msgid "Subtitle: "
 msgstr "字幕： "
 
+#: resources/ui/item.ui:260
+msgid "Route: "
+msgstr "线路： "
+
+#: resources/ui/item.ui:270
+msgid "Switch Route"
+msgstr "切换线路"
+
+#: src/ui/widgets/route_switcher.rs:45
+msgid "Route"
+msgstr "线路"
+
 #: resources/ui/item.ui:308
 msgid "View this season"
 msgstr "查看本季"

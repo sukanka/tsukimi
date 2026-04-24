@@ -196,6 +196,9 @@ pub(crate) mod imp {
         #[template_child]
         pub episode_switcher: TemplateChild<EpisodeSwitcher>,
 
+        #[template_child]
+        pub route_switch_button: TemplateChild<gtk::MenuButton>,
+
         pub show_button_animation: OnceCell<adw::TimedAnimation>,
         pub hide_button_animation: OnceCell<adw::TimedAnimation>,
 
@@ -262,6 +265,10 @@ pub(crate) mod imp {
             ));
 
             let item = self.obj().item();
+
+            crate::ui::widgets::route_switcher::setup_route_switch_button(
+                &self.route_switch_button.get(),
+            );
 
             if item.item_type() == "Series"
                 || (item.item_type() == "Episode" && item.series_name().is_some())

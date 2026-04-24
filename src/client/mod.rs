@@ -8,6 +8,9 @@ pub mod structs;
 #[cfg(target_os = "windows")]
 pub mod windows_compat;
 
-pub use account::Account;
+pub use account::{
+    Account,
+    Route,
+};
 pub use dandan::*;
 pub use proxy::ReqClient;

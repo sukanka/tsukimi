@@ -34,6 +34,7 @@ pub mod imp {
         access_token: RefCell<String>,
         #[property(get, set)]
         server_type: RefCell<Option<String>>,
+        pub inner: RefCell<Option<Account>>,
     }
 
     #[glib::derived_properties]
@@ -52,22 +53,38 @@ glib::wrapper! {
 
 impl AccountItem {
     pub fn from_simple(account: &Account) -> Self {
-        let account = account.to_owned();
         let item: AccountItem = glib::object::Object::new();
-        item.set_server(account.server);
-        item.set_servername(account.servername);
-        item.set_username(account.username);
-        item.set_password(account.password);
-        item.set_port(account.port);
-        item.set_user_id(account.user_id);
-        item.set_access_token(account.access_token);
-        if let Some(server_type) = account.server_type {
-            item.set_server_type(server_type);
+        item.set_server(account.server.clone());
+        item.set_servername(account.servername.clone());
+        item.set_username(account.username.clone());
+        item.set_password(account.password.clone());
+        item.set_port(account.port.clone());
+        item.set_user_id(account.user_id.clone());
+        item.set_access_token(account.access_token.clone());
+        if let Some(server_type) = &account.server_type {
+            item.set_server_type(server_type.clone());
         }
+        item.imp().inner.replace(Some(account.to_owned()));
         item
     }
 
     pub fn account(&self) -> Account {
+        if let Some(account) = self.imp().inner.borrow().as_ref() {
+            return Account {
+                server: self.server(),
+                servername: self.servername(),
+                username: self.username(),
+                password: self.password(),
+                port: self.port(),
+                user_id: self.user_id(),
+                access_token: self.access_token(),
+                server_type: self.server_type(),
+                path: account.path.clone(),
+                route_name: account.route_name.clone(),
+                routes: account.routes.clone(),
+                active_route: account.active_route,
+            };
+        }
         Account {
             server: self.server(),
             servername: self.servername(),
@@ -77,6 +94,10 @@ impl AccountItem {
             user_id: self.user_id(),
             access_token: self.access_token(),
             server_type: self.server_type(),
+            path: None,
+            route_name: None,
+            routes: Vec::new(),
+            active_route: None,
         }
     }
 }

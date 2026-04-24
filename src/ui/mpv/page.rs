@@ -154,6 +154,8 @@ mod imp {
         #[template_child]
         pub title_label2: TemplateChild<gtk::Label>,
         #[template_child]
+        pub route_switch_button: TemplateChild<gtk::MenuButton>,
+        #[template_child]
         pub speed_spin: TemplateChild<gtk::SpinButton>,
         #[template_child]
         pub volume_spin: TemplateChild<gtk::SpinButton>,
@@ -316,6 +318,8 @@ mod imp {
         fn constructed(&self) {
             self.parent_constructed();
 
+            // Route switch removed from mpv (playing) page per user requirement
+            self.route_switch_button.get().set_visible(false);
             SETTINGS
                 .bind(
                     "mpv-show-buffer-speed",

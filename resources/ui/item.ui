@@ -250,6 +250,29 @@
                                             </child>
                                           </object>
                                         </child>
+                                        <child>
+                                          <object class="GtkBox">
+                                            <property name="orientation">horizontal</property>
+                                            <property name="halign">end</property>
+                                            <property name="spacing">6</property>
+                                            <child>
+                                              <object class="GtkLabel">
+                                                <property name="label" translatable="yes">Route: </property>
+                                                <attributes>
+                                                  <attribute name="weight" value="PANGO_WEIGHT_BOLD" />
+                                                </attributes>
+                                              </object>
+                                            </child>
+                                            <child>
+                                              <object class="GtkMenuButton" id="route_switch_button">
+                                                <property name="visible">False</property>
+                                                <property name="label" translatable="yes">Route</property>
+                                                <property name="tooltip-text" translatable="yes">Switch Route</property>
+                                                <property name="width-request">300</property>
+                                              </object>
+                                            </child>
+                                          </object>
+                                        </child>
                                       </object>
                                     </child>
                                   </object>
