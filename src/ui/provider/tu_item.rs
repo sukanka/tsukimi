@@ -126,6 +126,8 @@ pub mod imp {
         #[property(get, set, nullable)]
         end_date: RefCell<Option<DateTime>>,
         #[property(get, set, nullable)]
+        date_created: RefCell<Option<DateTime>>,
+        #[property(get, set, nullable)]
         overview: RefCell<Option<String>>,
         #[property(get, set, nullable)]
         tagline: RefCell<Option<String>>,
@@ -236,6 +238,7 @@ impl TuItem {
         tu_item.set_series_id(item.series_id);
         tu_item.set_status(item.status);
         tu_item.set_end_date(item.end_date.as_ref().map(chrono_to_glib));
+        tu_item.set_date_created(item.date_created.as_ref().map(chrono_to_glib));
         tu_item.set_overview(item.overview);
         tu_item.set_season_id(item.season_id);
 
