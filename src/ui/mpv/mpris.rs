@@ -32,7 +32,10 @@ use crate::{
     CLIENT_ID,
     gstl::player::imp::ListRepeatMode,
     ui::mpv::page::MPVPage,
-    utils::spawn,
+    utils::{
+        get_image_with_cache,
+        spawn,
+    },
 };
 use tracing::{
     info,
@@ -103,6 +106,7 @@ impl MPVPage {
             Property::CanSeek(true),
             Property::PlaybackStatus(PlaybackStatus::Playing),
         ]);
+        self.notify_mpris_art_changed();
     }
 
     pub fn notify_mpris_paused(&self) {
@@ -136,7 +140,54 @@ impl MPVPage {
         ]);
     }
 
-    pub fn notify_mpris_art_changed(&self) {}
+    pub fn notify_mpris_art_changed(&self) {
+        let mut metadata = self.metadata().clone();
+        spawn(glib::clone!(
+            #[weak(rename_to = imp)]
+            self.imp(),
+            #[weak(rename_to = obj)]
+            self,
+            async move {
+                if let Some(video) = obj.current_video().as_ref() {
+                    // Try episode cover → season cover → poster/backdrop
+                    let fallbacks: Vec<(String, &str)> = {
+                        let mut v = Vec::new();
+                        if let Some(id) = video.primary_image_item_id() {
+                            v.push((id, "Primary"));
+                        }
+                        if let Some(id) = video.season_id() {
+                            v.push((id, "Primary"));
+                        }
+                        if let Some(id) = video.series_id() {
+                            v.push((id, "Backdrop"));
+                        }
+                        if let Some(id) = video.parent_backdrop_item_id() {
+                            v.push((id, "Backdrop"));
+                        }
+                        if let Some(id) = video.parent_thumb_item_id() {
+                            v.push((id, "Thumb"));
+                        }
+                        v.push((video.id(), "Backdrop"));
+                        v.push((video.id(), "Primary"));
+                        v
+                    };
+
+                    for (id, img_type) in &fallbacks {
+                        if let Ok(path) = get_image_with_cache(id.clone(), img_type.to_string(), None).await {
+                            if !path.is_empty() {
+                                let url = format!("file://{}", path);
+                                imp.cached_art_url.replace(Some(url.clone()));
+                                imp.cached_art_id.replace(video.id());
+                                metadata.set_art_url(Some(url));
+                                obj.mpris_properties_changed([Property::Metadata(metadata)]);
+                                return;
+                            }
+                        }
+                    }
+                }
+            }
+        ));
+    }
 
     pub fn metadata(&self) -> Metadata {
         self.imp()
@@ -144,7 +195,25 @@ impl MPVPage {
             .current_video()
             .as_ref()
             .map_or_else(Metadata::new, |video| {
-                Metadata::builder().title(video.name()).build()
+                let mut builder = Metadata::builder()
+                    .title(video.name())
+                    .length(Time::from_secs(
+                        (video.run_time_ticks() / 10_000_000) as i64,
+                    ));
+                if let Some(artists) = video.artists() {
+                    builder = builder.artist([artists]);
+                }
+                if let Some(album) = video.album_id() {
+                    builder = builder.album(album);
+                }
+                // Use cached art URL if it matches the current video
+                let imp = self.imp();
+                if imp.cached_art_id.borrow().as_str() == video.id().as_str() {
+                    if let Some(url) = imp.cached_art_url.borrow().as_ref() {
+                        builder = builder.art_url(url.clone());
+                    }
+                }
+                builder.build()
             })
     }
 }
