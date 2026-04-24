@@ -103,6 +103,8 @@ pub mod imp {
         pub gapless: RefCell<bool>,
         #[cfg(target_os = "linux")]
         pub mpris_server: OnceCell<LocalServer<super::MusicPlayer>>,
+        pub cached_art_url: RefCell<Option<String>>,
+        pub cached_art_id: RefCell<String>,
     }
 
     #[glib::derived_properties]

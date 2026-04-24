@@ -150,12 +150,15 @@ impl MusicPlayer {
                     } else {
                         core_song.album_id()
                     };
-                    let path = get_image_with_cache(id, "Primary".to_string(), None)
-                        .await
-                        .unwrap_or_default();
-                    let url = format!("file://{}", path);
-                    metadata.set_art_url(Some(url));
-                    imp.mpris_properties_changed([Property::Metadata(metadata)]);
+                    if let Ok(path) = get_image_with_cache(id, "Primary".to_string(), None).await {
+                        if !path.is_empty() {
+                            let url = format!("file://{}", path);
+                            imp.imp().cached_art_url.replace(Some(url.clone()));
+                            imp.imp().cached_art_id.replace(core_song.id());
+                            metadata.set_art_url(Some(url));
+                            imp.mpris_properties_changed([Property::Metadata(metadata)]);
+                        }
+                    }
                 }
             }
         ));
@@ -167,12 +170,18 @@ impl MusicPlayer {
             .active_core_song()
             .as_ref()
             .map_or_else(Metadata::new, |song| {
-                Metadata::builder()
+                let mut builder = Metadata::builder()
                     .album(song.album_id())
                     .title(song.name())
                     .length(Time::from_secs(song.duration() as i64))
-                    .artist([song.artist()])
-                    .build()
+                    .artist([song.artist()]);
+                let imp = self.imp();
+                if imp.cached_art_id.borrow().as_str() == song.id().as_str() {
+                    if let Some(url) = imp.cached_art_url.borrow().as_ref() {
+                        builder = builder.art_url(url.clone());
+                    }
+                }
+                builder.build()
             })
     }
 }

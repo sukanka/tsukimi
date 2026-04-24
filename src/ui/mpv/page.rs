@@ -175,6 +175,8 @@ mod imp {
         pub shortcuts_window: RefCell<Option<ShortcutsWindow>>,
         #[cfg(target_os = "linux")]
         pub mpris_server: OnceCell<LocalServer<super::MPVPage>>,
+        pub cached_art_url: RefCell<Option<String>>,
+        pub cached_art_id: RefCell<String>,
 
         #[template_child]
         pub volume_adj: TemplateChild<gtk::Adjustment>,
