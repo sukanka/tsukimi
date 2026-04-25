@@ -64,7 +64,7 @@ jobs:
           cp PKGBUILD tsukimi-src.tar.gz /tmp/pkgbuild/
           chown -R builder:builder /tmp/pkgbuild
           su -m builder -c "cd /tmp/pkgbuild && makepkg --noconfirm --syncdeps --cleanbuild --clean --holdver"
-          cp /tmp/pkgbuild/*.pkg.tar.zst "$GITHUB_WORKSPACE"/
+          cp /tmp/pkgbuild/tsukimi-git-*.pkg.tar.zst "$GITHUB_WORKSPACE"/
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4

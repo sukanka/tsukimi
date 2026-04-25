@@ -3,6 +3,9 @@ name: Process Artifacts
 on:
   workflow_call:
 
+permissions:
+  contents: write
+
 jobs:
   telegram:
     name: Upload
@@ -96,6 +99,12 @@ jobs:
         run: |
           echo "NIGHTLY_DATE=$(date -u +%Y-%m-%d)" >> "$GITHUB_ENV"
           echo "NIGHTLY_SHA=${GITHUB_SHA::7}" >> "$GITHUB_ENV"
+
+      - name: Delete old nightly release
+        run: |
+          gh release delete nightly --yes --cleanup-tag || true
+        env:
+          GH_TOKEN: ${{ github.token }}
 
       - name: Publish nightly release
         uses: softprops/action-gh-release@v2
