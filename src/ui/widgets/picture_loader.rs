@@ -162,6 +162,7 @@ impl PictureLoader {
                             None::<&gio::Cancellable>,
                             move |r| match r {
                                 Ok(pixbuf) => {
+                                    #[allow(deprecated)]
                                     obj.imp().picture.set_paintable(Some(
                                         &gtk::gdk::Texture::for_pixbuf(&pixbuf),
                                     ));

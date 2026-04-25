@@ -1307,6 +1307,7 @@ impl MPVPage {
                 return;
             };
             pixbuf.fill(0);
+            #[allow(deprecated)]
             let texture = gtk::gdk::Texture::for_pixbuf(&pixbuf);
             Some(gtk::gdk::Cursor::from_texture(&texture, 0, 0, None))
         };

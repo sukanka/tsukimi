@@ -248,6 +248,7 @@ impl ImageInfoCard {
                             None::<&gio::Cancellable>,
                             move |r| match r {
                                 Ok(pixbuf) => {
+                                    #[allow(deprecated)]
                                     picture.set_paintable(Some(&gtk::gdk::Texture::for_pixbuf(
                                         &pixbuf,
                                     )));
