@@ -319,11 +319,7 @@ impl LocalPlayerInterface for MPVPage {
     }
 
     async fn seek(&self, offset: Time) -> fdo::Result<()> {
-        if offset.is_positive() {
-            self.imp().video.seek_forward(offset.as_secs());
-        } else {
-            self.imp().video.seek_backward(offset.as_secs());
-        }
+        self.imp().video.seek_forward(offset.as_secs());
         Ok(())
     }
 
