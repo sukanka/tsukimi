@@ -35,7 +35,11 @@ pub fn build_route_menu(account: &Account) -> gio::Menu {
 
     for (i, route) in account.routes.iter().enumerate() {
         let name = if route.name.trim().is_empty() {
-            format!("{} {}", gettext("Route"), i + 1)
+            if account.routes.len() == 1 {
+                account.main_route_name().to_string()
+            } else {
+                format!("{} {}", gettext("Route"), i + 1)
+            }
         } else {
             route.name.clone()
         };
@@ -59,16 +63,23 @@ pub fn setup_route_switch_button(button: &gtk::MenuButton) {
     refresh_route_switch_button(button, current_account().as_ref());
 }
 
-pub fn refresh_route_switch_button(button: &gtk::MenuButton, account: Option<&Account>) {
+pub fn refresh_route_switch_button(
+    button: &gtk::MenuButton,
+    account: Option<&Account>,
+) {
     match account {
-        Some(account) if !account.routes.is_empty() => {
+        Some(account) => {
             let label = match account.active_route {
                 Some(i) => account
                     .routes
                     .get(i)
                     .map(|r| {
                         if r.name.trim().is_empty() {
-                            format!("{} {}", gettext("Route"), i + 1)
+                            if account.routes.len() == 1 {
+                                account.main_route_name().to_string()
+                            } else {
+                                format!("{} {}", gettext("Route"), i + 1)
+                            }
                         } else {
                             r.name.clone()
                         }
@@ -80,7 +91,7 @@ pub fn refresh_route_switch_button(button: &gtk::MenuButton, account: Option<&Ac
             button.set_menu_model(Some(&build_route_menu(account)));
             button.set_visible(true);
         }
-        _ => {
+        None => {
             button.set_visible(false);
         }
     }
