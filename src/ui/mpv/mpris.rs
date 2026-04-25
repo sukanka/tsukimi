@@ -89,6 +89,9 @@ impl MPVPage {
     }
 
     pub fn notify_mpris_seeked(&self, position: i64) {
+        if position <= 0 {
+            return;
+        }
         spawn(glib::clone!(
             #[weak(rename_to=obj)]
             self,
@@ -114,6 +117,8 @@ impl MPVPage {
             Property::PlaybackStatus(PlaybackStatus::Playing),
         ]);
         self.notify_mpris_art_changed();
+        let position = self.imp().video.position();
+        self.notify_mpris_seeked((position * 1000.0) as i64);
     }
 
     pub fn notify_mpris_paused(&self) {

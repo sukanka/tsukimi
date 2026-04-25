@@ -88,6 +88,9 @@ impl MusicPlayer {
     }
 
     pub fn notify_mpris_seeked(&self, position: i64) {
+        if position <= 0 {
+            return;
+        }
         spawn(glib::clone!(
             #[weak(rename_to=obj)]
             self,
@@ -115,6 +118,8 @@ impl MusicPlayer {
             Property::CanGoNext(has_next),
         ]);
         self.notify_mpris_art_changed();
+        let position_ms = self.imp().get_position().mseconds() as i64;
+        self.notify_mpris_seeked(position_ms);
     }
 
     pub fn notify_mpris_playing(&self) {
@@ -124,6 +129,8 @@ impl MusicPlayer {
             Property::CanSeek(true),
             Property::PlaybackStatus(PlaybackStatus::Playing),
         ]);
+        let position_ms = self.imp().get_position().mseconds() as i64;
+        self.notify_mpris_seeked(position_ms);
     }
 
     pub fn notify_mpris_paused(&self) {
