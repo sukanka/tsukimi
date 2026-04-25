@@ -36,7 +36,8 @@ jobs:
           submodules: true
 
       - name: Get lockfile hash
-        run: echo "LOCKFILE_HASH=$(sha256sum Cargo.lock | cut -d ' ' -f 1)" >> $GITHUB_ENV
+        run: echo "LOCKFILE_HASH=$(sha256sum Cargo.lock | cut -d ' ' -f 1)" >>
+          $GITHUB_ENV
 
       - name: Cache
         uses: actions/cache@v5

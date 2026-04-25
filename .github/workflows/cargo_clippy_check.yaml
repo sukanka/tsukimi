@@ -1,5 +1,5 @@
 name: Clippy check
-on: 
+on:
   workflow_call:
 
 jobs:
