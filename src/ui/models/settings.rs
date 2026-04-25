@@ -11,7 +11,10 @@ use gtk::{
 
 use crate::{
     APP_ID,
-    client::Account,
+    client::{
+        Account,
+        DanmakuServer,
+    },
     ui::provider::descriptor::{
         Descriptor,
         VecSerialize,
@@ -63,6 +66,8 @@ impl Settings {
     const KEY_IS_DANMAKU_ENABLED: &'static str = "is-danmaku-enabled"; // bool
     const KEY_DANMAKU_APPID: &'static str = "danmaku-appid"; // String
     const KEY_DANMAKU_APPSECRET: &'static str = "danmaku-appsecret"; // String
+    const KEY_DANMAKU_SERVERS: &'static str = "danmaku-servers"; // String (JSON)
+    const KEY_DANMAKU_ACTIVE_SERVER: &'static str = "danmaku-active-server"; // i32
 
     fn has_key(&self, key: &str) -> bool {
         self.settings_schema()
@@ -94,6 +99,47 @@ impl Settings {
             return Ok(());
         }
         self.set_string(Self::KEY_DANMAKU_APPSECRET, appsecret)
+    }
+
+    pub fn danmaku_servers(&self) -> Vec<DanmakuServer> {
+        serde_json::from_str(self.string(Self::KEY_DANMAKU_SERVERS).as_ref()).unwrap_or_default()
+    }
+
+    pub fn set_danmaku_servers(&self, servers: Vec<DanmakuServer>) -> Result<(), glib::BoolError> {
+        self.set_string(Self::KEY_DANMAKU_SERVERS, &serde_json::to_string(&servers).unwrap_or_default())
+    }
+
+    pub fn add_danmaku_server(&self, server: DanmakuServer) -> Result<(), glib::BoolError> {
+        let mut servers = self.danmaku_servers();
+        if servers.contains(&server) {
+            return Ok(());
+        }
+        servers.push(server);
+        self.set_danmaku_servers(servers)
+    }
+
+    pub fn edit_danmaku_server(
+        &self, old: &DanmakuServer, new: DanmakuServer,
+    ) -> Result<(), glib::BoolError> {
+        let mut servers = self.danmaku_servers();
+        if let Some(s) = servers.iter_mut().find(|s| *s == old) {
+            *s = new;
+        }
+        self.set_danmaku_servers(servers)
+    }
+
+    pub fn remove_danmaku_server(&self, server: &DanmakuServer) -> Result<(), glib::BoolError> {
+        let mut servers = self.danmaku_servers();
+        servers.retain(|s| s != server);
+        self.set_danmaku_servers(servers)
+    }
+
+    pub fn danmaku_active_server(&self) -> i32 {
+        self.int(Self::KEY_DANMAKU_ACTIVE_SERVER)
+    }
+
+    pub fn set_danmaku_active_server(&self, index: i32) -> Result<(), glib::BoolError> {
+        self.set_int(Self::KEY_DANMAKU_ACTIVE_SERVER, index)
     }
 
     #[cfg(target_os = "windows")]

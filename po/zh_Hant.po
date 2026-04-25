@@ -1409,9 +1409,9 @@ msgstr "播放速度"
 msgid "Volume"
 msgstr "音量"
 
-#: resources/ui/mpvpage.ui:480
+#: resources/ui/mpvpage.ui:480 resources/ui/account_settings.ui:343
 msgid "Danmaku"
-msgstr ""
+msgstr "彈幕"
 
 #: resources/ui/mpvpage.ui:499
 msgid "No danmakus loaded"
@@ -1730,6 +1730,62 @@ msgstr "特別節目"
 #: resources/ui/missing_episodes.ui:72
 msgid "Upcoming"
 msgstr "即將推出"
+
+#: resources/ui/account_settings.ui:348
+msgid "DanDanPlay API"
+msgstr "DanDanPlay 介面"
+
+#: resources/ui/account_settings.ui:349
+msgid "Custom servers compatible with dandanplay API protocol"
+msgstr "自定義相容 DanDanPlay API 協定的伺服器"
+
+#: resources/ui/account_settings.ui:352
+msgid "Active Server"
+msgstr "目前伺服器"
+
+#: resources/ui/account_settings.ui:358
+msgid "Add Custom Server"
+msgstr "新增自訂伺服器"
+
+#: resources/ui/account_settings.ui:367
+msgid "URL"
+msgstr "URL"
+
+#: resources/ui/account_settings.ui:385
+msgid "Remove Selected Server"
+msgstr "刪除選中伺服器"
+
+#: src/ui/widgets/account_settings.rs:772 src/ui/mpv/page.rs:1841
+msgid "Default (api.dandanplay.net)"
+msgstr "預設 (api.dandanplay.net)"
+
+#: src/ui/widgets/account_settings.rs:794
+msgid "Update"
+msgstr "更新"
+
+#: src/ui/widgets/account_settings.rs:820
+msgid "Please fill in both name and URL."
+msgstr "請同時填寫名稱和 URL。"
+
+#: src/ui/widgets/account_settings.rs:830
+msgid "No changes detected."
+msgstr "未檢測到變更。"
+
+#: src/ui/widgets/account_settings.rs:834
+msgid "Failed to update server."
+msgstr "更新伺服器失敗。"
+
+#: src/ui/widgets/account_settings.rs:839
+msgid "Failed to save server."
+msgstr "儲存伺服器失敗。"
+
+#: resources/ui/mpvpage.ui:689
+msgid "Server"
+msgstr "伺服器"
+
+#: src/ui/widgets/account_settings.rs:798
+msgid "Edit Custom Server"
+msgstr "編輯自訂伺服器"
 
 #~ msgid "Danmaku Settings"
 #~ msgstr "彈幕設定"

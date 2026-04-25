@@ -684,6 +684,12 @@
                             <signal name="changed" handler="on_danmaku_appsecret_changed" swapped="yes"/>
                           </object>
                         </child>
+                        <child>
+                          <object class="AdwComboRow" id="danmaku_server_combo">
+                            <property name="title" translatable="yes">Server</property>
+                            <signal name="notify::selected" handler="on_danmaku_server_combo_changed" swapped="yes"/>
+                          </object>
+                        </child>
                       </object>
                     </child>
                     <style>
