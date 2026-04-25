@@ -143,7 +143,8 @@ msgstr "您確定要繼續嗎？"
 #: src/ui/widgets/image_dialog/search_page.rs:151
 #: src/ui/widgets/tu_item/action.rs:469 src/ui/widgets/tu_item/action.rs:527
 #: src/ui/widgets/identify/search_page.rs:129
-#: resources/ui/account_settings.ui:508 resources/ui/account_settings.ui:618
+#: resources/ui/account.ui:219 resources/ui/account_settings.ui:508
+#: resources/ui/account_settings.ui:618
 msgid "Cancel"
 msgstr "取消"
 
@@ -338,6 +339,14 @@ msgstr "首頁"
 #: resources/ui/image_info_card.ui:127 resources/ui/identify_dialog.ui:94
 msgid "Search"
 msgstr "搜尋"
+
+#: src/ui/widgets/window.rs:568
+msgid "Failed to save account"
+msgstr "儲存帳戶失敗"
+
+#: src/ui/widgets/window.rs:577
+msgid "Failed to switch route"
+msgstr "切換線路失敗"
 
 #: src/ui/widgets/window.rs:801
 msgid "Server Panel"
@@ -1062,16 +1071,44 @@ msgid "Port"
 msgstr "端口"
 
 #: resources/ui/account.ui:92
+msgid "Route Name (optional, e.g. \"LAN\", \"WAN\")"
+msgstr "線路名稱（可選，例如\"LAN\"、\"WAN\"）"
+
+#: resources/ui/account.ui:97 resources/ui/account.ui:279
+msgid "URL Path Prefix (optional, e.g. for reverse proxy)"
+msgstr "URL 路徑前綴（可選，例如反向代理）"
+
+#: resources/ui/account.ui:101
 msgid "Username"
 msgstr "用戶名"
 
-#: resources/ui/account.ui:97
+#: resources/ui/account.ui:106
 msgid "Password"
 msgstr "密碼"
 
-#: resources/ui/account.ui:108 resources/ui/account_settings.ui:514
+#: resources/ui/account.ui:120 resources/ui/account_settings.ui:514
 msgid "Add"
 msgstr "添加"
+
+#: resources/ui/account.ui:116
+msgid "Additional Routes"
+msgstr "額外線路"
+
+#: resources/ui/account.ui:117
+msgid "Alternative network routes. You can switch between them after logging in. Re-login is required when switching."
+msgstr "備選網路線路。登入後可以切換，切換後需要重新登入。"
+
+#: resources/ui/account.ui:122
+msgid "Add Route"
+msgstr "新增線路"
+
+#: resources/ui/account.ui:136
+msgid "No additional routes"
+msgstr "暫無額外線路"
+
+#: resources/ui/account.ui:137
+msgid "Click the + button to add a route."
+msgstr "點擊 + 按鈕新增線路。"
 
 #: resources/ui/server_action_row.ui:23
 msgid "Drag to reorder"
@@ -1339,7 +1376,7 @@ msgstr "例如 –「1080p.*WebDL」"
 msgid "Edit descriptor"
 msgstr "編輯描述符"
 
-#: resources/ui/account_settings.ui:624
+#: resources/ui/account.ui:225 resources/ui/account_settings.ui:624
 #: resources/ui/image_dialog_edit_page.ui:37
 msgid "Save"
 msgstr "保存"
@@ -1452,7 +1489,7 @@ msgstr "線路： "
 msgid "Switch Route"
 msgstr "切換線路"
 
-#: src/ui/widgets/route_switcher.rs:45
+#: src/ui/widgets/route_switcher.rs:45 resources/ui/account.ui:208
 msgid "Route"
 msgstr "線路"
 
