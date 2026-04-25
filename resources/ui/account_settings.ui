@@ -340,6 +340,62 @@
     </child>
     <child>
       <object class="AdwPreferencesPage">
+        <property name="title" translatable="yes">Danmaku</property>
+        <property name="name">Danmaku</property>
+        <property name="icon-name">card-bulleted-symbolic</property>
+        <child>
+          <object class="AdwPreferencesGroup">
+            <property name="title" translatable="yes">DanDanPlay API</property>
+            <property name="description" translatable="yes">Custom servers compatible with dandanplay API protocol</property>
+            <child>
+              <object class="AdwComboRow" id="settings_danmaku_server_combo">
+                <property name="title" translatable="yes">Active Server</property>
+                <signal name="notify::selected" handler="on_settings_danmaku_server_combo_changed" swapped="yes"/>
+              </object>
+            </child>
+            <child>
+              <object class="AdwExpanderRow" id="settings_danmaku_server_mgr_row">
+                <property name="title" translatable="yes">Add Custom Server</property>
+                <child>
+                  <object class="AdwEntryRow" id="settings_danmaku_server_name_row">
+                    <property name="title" translatable="yes">Name</property>
+                    <property name="show-apply-button">false</property>
+                  </object>
+                </child>
+                <child>
+                  <object class="AdwEntryRow" id="settings_danmaku_server_url_row">
+                    <property name="title" translatable="yes">URL</property>
+                    <property name="show-apply-button">false</property>
+                  </object>
+                </child>
+                <child>
+                  <object class="AdwButtonRow" id="settings_danmaku_server_add_btn">
+                    <property name="title" translatable="yes">Add</property>
+                    <signal name="activated" handler="on_settings_danmaku_server_add_clicked" swapped="yes"/>
+                    <property name="start-icon-name">list-add-symbolic</property>
+                    <style>
+                      <class name="suggested-action"/>
+                    </style>
+                  </object>
+                </child>
+              </object>
+            </child>
+            <child>
+              <object class="AdwButtonRow" id="settings_danmaku_server_remove_btn">
+                <property name="title" translatable="yes">Remove Selected Server</property>
+                <signal name="activated" handler="on_settings_danmaku_server_remove_clicked" swapped="yes"/>
+                <property name="start-icon-name">user-trash-symbolic</property>
+                <style>
+                  <class name="destructive-action"/>
+                </style>
+              </object>
+            </child>
+          </object>
+        </child>
+      </object>
+    </child>
+    <child>
+      <object class="AdwPreferencesPage">
         <property name="title" translatable="yes">Others</property>
         <property name="name">Others</property>
         <property name="icon-name">preferences-other-symbolic</property>

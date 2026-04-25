@@ -31,6 +31,9 @@ use super::{
 };
 use crate::{
     client::{
+        apply_danmaku_active_server,
+        danmaku_combo_to_server_index,
+        danmaku_server_to_combo_index,
         DanmakuConvert,
         error::UserFacingError,
         jellyfin_client::{
@@ -207,6 +210,9 @@ mod imp {
         pub danmaku_appsecret_row: TemplateChild<adw::PasswordEntryRow>,
 
         #[template_child]
+        pub danmaku_server_combo: TemplateChild<adw::ComboRow>,
+
+        #[template_child]
         pub danmaku_anime_row: TemplateChild<adw::EntryRow>,
 
         #[template_child]
@@ -359,6 +365,8 @@ mod imp {
                     "GSettings keys danmaku-appid/danmaku-appsecret not found, custom DanDan credentials disabled"
                 );
             }
+
+            self.obj().rebuild_server_list();
 
             self.danmaku_area
                 .set_enable_danmaku(SETTINGS.is_danmaku_enabled());
@@ -569,6 +577,9 @@ mod imp {
         pub(super) fn init_dandanapi_client(&self) {
             use crate::client::*;
             use dandanapi::*;
+
+            // Apply the active server URL
+            self.obj().apply_active_server();
 
             // Prefer live UI input to avoid race with Settings binding propagation.
             let appid_text = self.danmaku_appid_row.text().trim().to_string();
@@ -1399,7 +1410,7 @@ impl MPVPage {
     #[template_callback]
     fn left_click_cb(&self) {
         if self.imp().danmaku_button.is_active() {
-            self.imp().danmaku_popover.popdown();
+            self.imp().danmaku_button.set_active(false);
             return;
         }
         self.imp().video.pause();
@@ -1804,6 +1815,35 @@ impl MPVPage {
     #[template_callback]
     pub fn on_danmaku_appsecret_changed(&self, _entry: &adw::PasswordEntryRow) {
         self.auto_save_danmaku_credentials();
+    }
+
+    #[template_callback]
+    pub fn on_danmaku_server_combo_changed(&self, _pspec: glib::ParamSpec) {
+        let selected = self.imp().danmaku_server_combo.selected();
+        let _ = SETTINGS.set_danmaku_active_server(danmaku_combo_to_server_index(selected));
+        self.apply_active_server();
+    }
+
+    pub fn apply_active_server(&self) {
+        apply_danmaku_active_server(SETTINGS.danmaku_active_server(), &SETTINGS.danmaku_servers());
+    }
+
+    pub fn rebuild_server_list(&self) {
+        let servers = SETTINGS.danmaku_servers();
+        let active = SETTINGS.danmaku_active_server();
+
+        // Build the combo model: [ Default, server1, server2, ... ]
+        let model =
+            gtk::StringList::new(&[gettext(crate::client::DEFAULT_DANMAKU_SERVER_LABEL).as_str()]);
+        for s in &servers {
+            model.append(&s.name);
+        }
+        self.imp()
+            .danmaku_server_combo
+            .set_model(Some(&model));
+        self.imp()
+            .danmaku_server_combo
+            .set_selected(danmaku_server_to_combo_index(active));
     }
 
     fn auto_save_danmaku_credentials(&self) {
