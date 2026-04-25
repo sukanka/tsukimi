@@ -213,6 +213,9 @@ mod imp {
         pub danmaku_episode_row: TemplateChild<adw::EntryRow>,
 
         #[template_child]
+        pub danmaku_tmdb_row: TemplateChild<adw::EntryRow>,
+
+        #[template_child]
         pub danmaku_top_padding_adj: TemplateChild<gtk::Adjustment>,
 
         #[template_child]
@@ -441,10 +444,18 @@ mod imp {
                     };
                     obj.imp().danmaku_episode_row.set_text(&episode);
 
-                    if let Some(tmdb_id) = item.tmdb_id().and_then(|id| id.parse::<i32>().ok()) {
-                        if let Some(series_name) = item.series_name() {
-                            obj.imp().danmaku_anime_row.set_text(&series_name);
-                        }
+                    // 剧名：立即填充
+                    if let Some(series_name) = item.series_name() {
+                        obj.imp().danmaku_anime_row.set_text(&series_name);
+                    } else {
+                        obj.imp().danmaku_anime_row.set_text(&item.name());
+                    }
+
+                    let tmdb_str = item.tmdb_id().unwrap_or_default();
+                    obj.imp().danmaku_tmdb_row.set_text(&tmdb_str);
+
+                    if let Some(tmdb_id) = tmdb_str.parse::<i32>().ok() {
+                        // tmdb_id 已就绪，异步获取官方标题覆盖
                         spawn(glib::clone!(
                             #[weak(rename_to = obj)]
                             obj,
@@ -454,10 +465,58 @@ mod imp {
                                 }
                             }
                         ));
-                    } else if let Some(series_name) = item.series_name() {
-                        obj.imp().danmaku_anime_row.set_text(&series_name);
                     } else {
-                        obj.imp().danmaku_anime_row.set_text(&item.name());
+                        let item_clone = item.clone();
+                        spawn(glib::clone!(
+                            #[weak(rename_to = obj)]
+                            obj,
+                            async move {
+                                let is_episode = item_clone.item_type() == "Episode";
+                                let mut resolved = item_clone.tmdb_id().and_then(|id| id.parse::<i32>().ok());
+                                // 剧集自身的 tmdb_id 可能不准，跳过自查询
+                                if resolved.is_none() && !is_episode {
+                                    let id = item_clone.id();
+                                    if let Ok(info) = spawn_tokio(async move {
+                                        JELLYFIN_CLIENT.get_item_info(&id).await
+                                    })
+                                    .await
+                                    {
+                                        resolved = info.provider_ids.and_then(|p| p.tmdb).and_then(|id| id.parse::<i32>().ok());
+                                    }
+                                }
+                                if resolved.is_none() {
+                                    if let Some(season_id) = item_clone.season_id() {
+                                        let sid = season_id.clone();
+                                        if let Ok(info) = spawn_tokio(async move {
+                                            JELLYFIN_CLIENT.get_item_info(&sid).await
+                                        })
+                                        .await
+                                        {
+                                            resolved = info.provider_ids.and_then(|p| p.tmdb).and_then(|id| id.parse::<i32>().ok());
+                                        }
+                                    }
+                                }
+                                if resolved.is_none() {
+                                    if let Some(series_id) = item_clone.series_id() {
+                                        let sid = series_id.clone();
+                                        if let Ok(info) = spawn_tokio(async move {
+                                            JELLYFIN_CLIENT.get_item_info(&sid).await
+                                        })
+                                        .await
+                                        {
+                                            resolved = info.provider_ids.and_then(|p| p.tmdb).and_then(|id| id.parse::<i32>().ok());
+                                        }
+                                    }
+                                }
+
+                                if let Some(tmdb_id) = resolved {
+                                    obj.imp().danmaku_tmdb_row.set_text(&tmdb_id.to_string());
+                                    if let Some(title) = obj.fetch_anime_title(tmdb_id).await {
+                                        obj.imp().danmaku_anime_row.set_text(&title);
+                                    }
+                                }
+                            }
+                        ));
                     }
                 }
             ));
@@ -1697,64 +1756,14 @@ impl MPVPage {
                 input
             }
         };
-        let mut tmdb_id = item.tmdb_id().and_then(|id| id.parse::<i32>().ok());
-
-        if tmdb_id.is_none() {
-            let is_episode = item.item_type() == "Episode";
-            // 1. 直接查自己（仅电影适用，剧集自身的 tmdb_id 可能不准）
-            if !is_episode {
-                let id = item.id();
-                if let Ok(info) = spawn_tokio(async move {
-                    JELLYFIN_CLIENT.get_item_info(&id).await
-                })
-                .await
-                {
-                    tmdb_id = info
-                        .provider_ids
-                        .and_then(|p| p.tmdb)
-                        .and_then(|id| id.parse::<i32>().ok());
-                    tracing::debug!(?tmdb_id, "manual_search: from item self");
-                }
+        let tmdb_id = {
+            let input = self.imp().danmaku_tmdb_row.text().trim().to_string();
+            if input.is_empty() {
+                None
+            } else {
+                input.parse::<i32>().ok()
             }
-            if tmdb_id.is_none() {
-                if let Some(season_id) = item.season_id() {
-                    tracing::debug!(?season_id, "manual_search: trying season lookup");
-                    let season_id_clone = season_id.clone();
-                    if let Ok(season_item) = spawn_tokio(async move {
-                        JELLYFIN_CLIENT.get_item_info(&season_id_clone).await
-                    })
-                    .await
-                    {
-                        tmdb_id = season_item
-                            .provider_ids
-                            .and_then(|p| p.tmdb)
-                            .and_then(|id| id.parse::<i32>().ok());
-                        tracing::debug!(?tmdb_id, ?season_id, "manual_search: from season");
-                    }
-                } else {
-                    tracing::debug!("manual_search: no season_id on item");
-                }
-            }
-            if tmdb_id.is_none() {
-                if let Some(series_id) = item.series_id() {
-                    tracing::debug!(?series_id, "manual_search: trying series lookup");
-                    let series_id_clone = series_id.clone();
-                    if let Ok(series_item) = spawn_tokio(async move {
-                        JELLYFIN_CLIENT.get_item_info(&series_id_clone).await
-                    })
-                    .await
-                    {
-                        tmdb_id = series_item
-                            .provider_ids
-                            .and_then(|p| p.tmdb)
-                            .and_then(|id| id.parse::<i32>().ok());
-                        tracing::debug!(?tmdb_id, ?series_id, "manual_search: from series");
-                    }
-                } else {
-                    tracing::debug!("manual_search: no series_id on item");
-                }
-            }
-        }
+        };
 
         let time_milis = (item.playback_position_ticks() / 10000) as f64;
         tracing::info!(anime, episode, ?tmdb_id, "Manual danmaku search");

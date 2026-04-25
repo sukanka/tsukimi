@@ -756,6 +756,10 @@ msgstr "视频"
 msgid "Episode"
 msgstr "剧集"
 
+#: resources/ui/mpvpage.ui:649
+msgid "TMDB ID"
+msgstr "TMDB ID"
+
 #: resources/ui/search.ui:166
 msgid "Nothing Here or No type selected"
 msgstr "无内容或未选择类型"
