@@ -93,7 +93,6 @@ mod imp {
     use once_cell::sync::OnceCell;
 
     use crate::{
-        APP_ID,
         client::structs::Back,
         ui::{
             models::SETTINGS,
@@ -175,6 +174,8 @@ mod imp {
         pub shortcuts_window: RefCell<Option<ShortcutsWindow>>,
         #[cfg(target_os = "linux")]
         pub mpris_server: OnceCell<LocalServer<super::MPVPage>>,
+        #[cfg(target_os = "linux")]
+        pub mpris_initializing: std::cell::Cell<bool>,
         pub cached_art_url: RefCell<Option<String>>,
         pub cached_art_id: RefCell<String>,
 
@@ -422,18 +423,6 @@ mod imp {
 
             self.init_dandanapi_client();
 
-            // Initialize MPRIS server
-            #[cfg(target_os = "linux")]
-            glib::spawn_future_local(glib::clone!(
-                #[weak(rename_to = imp)]
-                self,
-                async move {
-                    let app_id = format!("{}.{}", APP_ID, "mpv");
-                    if let Err(e) = imp.obj().initialize_mpris(&app_id).await {
-                        tracing::warn!("Failed to initialize mpris server: {}", e);
-                    }
-                }
-            ));
         }
     }
 
@@ -717,9 +706,9 @@ impl MPVPage {
                 } else {
                     imp.danmaku_list.replace(None);
                 };
+                obj.notify_playing();
             }
         ));
-        self.notify_playing();
     }
 
     async fn external_sub_url_without_selected_source(

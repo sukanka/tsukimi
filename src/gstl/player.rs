@@ -37,7 +37,6 @@ pub mod imp {
     use once_cell::sync::*;
     use tracing::{
         debug,
-        warn,
     };
 
     use super::*;
@@ -103,6 +102,8 @@ pub mod imp {
         pub gapless: RefCell<bool>,
         #[cfg(target_os = "linux")]
         pub mpris_server: OnceCell<LocalServer<super::MusicPlayer>>,
+        #[cfg(target_os = "linux")]
+        pub mpris_initializing: std::cell::Cell<bool>,
         pub cached_art_url: RefCell<Option<String>>,
         pub cached_art_id: RefCell<String>,
     }
@@ -117,18 +118,6 @@ pub mod imp {
 
             // Build the pipeline
             let pipeline = gst::ElementFactory::make("playbin3").build().unwrap();
-
-            // Initialize the mpris server
-            #[cfg(target_os = "linux")]
-            glib::spawn_future_local(glib::clone!(
-                #[weak(rename_to = imp)]
-                self,
-                async move {
-                    if let Err(e) = imp.obj().initialize_mpris().await {
-                        warn!("Failed to initialize mpris server: {}", e);
-                    }
-                }
-            ));
 
             // Start playing
             let bus = pipeline.bus().unwrap();
@@ -259,7 +248,6 @@ pub mod imp {
             self.pipeline()
                 .set_state(gst::State::Playing)
                 .expect("Unable to set the pipeline to the `Playing` state");
-            self.notify_playing();
         }
 
         pub async fn play(&self, core_song: &CoreSong) {
@@ -378,9 +366,7 @@ pub mod imp {
         }
 
         pub fn unpause(&self) {
-            self.pipeline()
-                .set_state(gst::State::Playing)
-                .expect("Unable to set the pipeline to the `Playing` state");
+            self.playing();
             self.notify_playing();
         }
 
