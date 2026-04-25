@@ -100,7 +100,6 @@ mod imp {
         ui::{
             models::SETTINGS,
             mpv::{
-                MpvTimer,
                 VolumeBar,
                 menu_actions::MenuActions,
                 mpvglarea::MPVGLArea,
@@ -619,18 +618,19 @@ mod imp {
         }
 
         pub fn pause_danmaku(&self) {
-            self.danmaku_area.stop_rendering();
+            self.danmaku_area.pause();
         }
 
         pub fn resume_danmaku(&self) {
-            self.danmaku_area
-                .start_rendering(MpvTimer::new(self.video.imp().mpv().mpv.clone()));
+            let position = self.video.position();
+            self.danmaku_area.seek(position * 1000.0);
+            self.danmaku_area.play();
         }
 
         pub fn init_danmaku(&self, danmaku: Vec<danmakw::Danmaku>, time_milis: f64) {
             self.danmaku_list.replace(Some(danmaku.clone()));
             self.danmaku_area.set_danmaku(danmaku);
-            self.danmaku_area.set_time_milis(time_milis);
+            self.danmaku_area.seek(time_milis);
         }
     }
 }
