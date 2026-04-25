@@ -74,6 +74,8 @@ pub mod imp {
         series_id: RefCell<Option<String>>,
         #[property(get, set, nullable)]
         season_id: RefCell<Option<String>>,
+        #[property(get, set, nullable)]
+        tmdb_id: RefCell<Option<String>>,
         #[property(get, set)]
         played_percentage: RefCell<f64>,
         #[property(get, set)]
@@ -241,6 +243,10 @@ impl TuItem {
         tu_item.set_date_created(item.date_created.as_ref().map(chrono_to_glib));
         tu_item.set_overview(item.overview);
         tu_item.set_season_id(item.season_id);
+
+        if let Some(provider_ids) = &item.provider_ids {
+            tu_item.set_tmdb_id(provider_ids.tmdb.clone());
+        }
 
         tu_item
     }

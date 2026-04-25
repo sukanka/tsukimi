@@ -423,6 +423,44 @@ mod imp {
 
             self.init_dandanapi_client();
 
+            obj.imp().danmaku_popover.get().connect_show(glib::clone!(
+                #[weak(rename_to = obj)]
+                obj,
+                move |_| {
+                    let Some(item) = obj.current_video() else {
+                        return;
+                    };
+
+                    let is_movie = item.item_type() == "Movie";
+                    let episode = if is_movie {
+                        String::new()
+                    } else if item.index_number() > 0 {
+                        item.index_number().to_string()
+                    } else {
+                        item.name()
+                    };
+                    obj.imp().danmaku_episode_row.set_text(&episode);
+
+                    if let Some(tmdb_id) = item.tmdb_id().and_then(|id| id.parse::<i32>().ok()) {
+                        if let Some(series_name) = item.series_name() {
+                            obj.imp().danmaku_anime_row.set_text(&series_name);
+                        }
+                        spawn(glib::clone!(
+                            #[weak(rename_to = obj)]
+                            obj,
+                            async move {
+                                if let Some(title) = obj.fetch_anime_title(tmdb_id).await {
+                                    obj.imp().danmaku_anime_row.set_text(&title);
+                                }
+                            }
+                        ));
+                    } else if let Some(series_name) = item.series_name() {
+                        obj.imp().danmaku_anime_row.set_text(&series_name);
+                    } else {
+                        obj.imp().danmaku_anime_row.set_text(&item.name());
+                    }
+                }
+            ));
         }
     }
 
@@ -1408,13 +1446,22 @@ impl MPVPage {
             return;
         };
 
-        let (anime, episode, time_ticks) = {
+        let (anime, episode, tmdb_id, time_ticks) = {
+            let is_movie = item.item_type() == "Movie";
             if let Some(series_name) = item.series_name() {
-                (series_name, item.name(), item.playback_position_ticks())
+                let episode = if is_movie {
+                    String::new()
+                } else if item.index_number() > 0 {
+                    item.index_number().to_string()
+                } else {
+                    item.name()
+                };
+                (series_name, episode, item.tmdb_id(), item.playback_position_ticks())
             } else {
                 (
                     item.name(),
-                    "movie".to_string(),
+                    String::new(),
+                    item.tmdb_id(),
                     item.playback_position_ticks(),
                 )
             }
@@ -1422,12 +1469,83 @@ impl MPVPage {
 
         let time_milis = (time_ticks / 10000) as f64;
 
+        let mut tmdb_id = tmdb_id.and_then(|id| id.parse::<i32>().ok());
+
+        // item 可能没有 tmdb_id（来自不返回 ProviderIds 的 API），按顺序尝试获取
+        if tmdb_id.is_none() {
+            let is_episode = item.item_type() == "Episode";
+            // 1. 直接查自己（仅电影适用，剧集自身的 tmdb_id 可能不准）
+            if !is_episode {
+                let id = item.id();
+                if let Ok(info) = spawn_tokio(async move {
+                    JELLYFIN_CLIENT.get_item_info(&id).await
+                })
+                .await
+                {
+                    tmdb_id = info
+                        .provider_ids
+                        .and_then(|p| p.tmdb)
+                        .and_then(|id| id.parse::<i32>().ok());
+                    tracing::debug!(?tmdb_id, "load_danmaku: from item self");
+                }
+            }
+            // 2. 再查 season（剧集用 season 的 tmdb_id 更精确）
+            if tmdb_id.is_none() {
+                if let Some(season_id) = item.season_id() {
+                    tracing::debug!(?season_id, "load_danmaku: trying season lookup");
+                    let season_id_clone = season_id.clone();
+                    if let Ok(season_item) = spawn_tokio(async move {
+                        JELLYFIN_CLIENT.get_item_info(&season_id_clone).await
+                    })
+                    .await
+                    {
+                        tmdb_id = season_item
+                            .provider_ids
+                            .and_then(|p| p.tmdb)
+                            .and_then(|id| id.parse::<i32>().ok());
+                        tracing::debug!(?tmdb_id, ?season_id, "load_danmaku: from season");
+                    }
+                } else {
+                    tracing::debug!("load_danmaku: no season_id on item");
+                }
+            }
+            // 3. 再查系列
+            if tmdb_id.is_none() {
+                if let Some(series_id) = item.series_id() {
+                    tracing::debug!(?series_id, "load_danmaku: trying series lookup");
+                    let series_id_clone = series_id.clone();
+                    if let Ok(series_item) = spawn_tokio(async move {
+                        JELLYFIN_CLIENT.get_item_info(&series_id_clone).await
+                    })
+                    .await
+                    {
+                        tmdb_id = series_item
+                            .provider_ids
+                            .and_then(|p| p.tmdb)
+                            .and_then(|id| id.parse::<i32>().ok());
+                        tracing::debug!(?tmdb_id, ?series_id, "load_danmaku: from series");
+                    }
+                } else {
+                    tracing::debug!("load_danmaku: no series_id on item");
+                }
+            }
+        }
+
+        // 有 tmdb_id 时不传 anime，避免剧名不匹配导致搜索失败
+        let search_anime = if tmdb_id.is_some() {
+            String::new()
+        } else {
+            anime
+        };
+
+        tracing::info!(anime = search_anime, episode, ?tmdb_id, "Auto danmaku search");
+
         let imp = self.imp();
         let danmaku = self
             .request_danmaku(dandanapi::RequestEpisodes {
-                anime,
+                anime: search_anime,
                 episode,
-                tmdb_id: None,
+                tmdb_id,
             })
             .await;
 
@@ -1498,6 +1616,20 @@ impl MPVPage {
         Ok(danmaku)
     }
 
+    async fn fetch_anime_title(&self, tmdb_id: i32) -> Option<String> {
+        let client = self.imp().danmaku_client.get()?;
+        let route = client.route(dandanapi::Episodes(dandanapi::RequestEpisodes {
+            anime: String::new(),
+            episode: String::new(),
+            tmdb_id: Some(tmdb_id),
+        }));
+        spawn_tokio(async move {
+            let response = route.await.ok()?;
+            response.animes?.first()?.anime_title.clone().into()
+        })
+        .await
+    }
+
     #[template_callback]
     pub fn on_danmaku_switch_state_set(&self, state: bool) -> bool {
         self.imp().danmaku_area.set_enable_danmaku(state);
@@ -1539,10 +1671,18 @@ impl MPVPage {
             return;
         };
 
-        let (default_anime, default_episode) = if let Some(series_name) = item.series_name() {
-            (series_name, item.name())
+        let is_movie = item.item_type() == "Movie";
+        let (default_anime, default_episode) = if is_movie {
+            (item.name(), String::new())
+        } else if let Some(series_name) = item.series_name() {
+            let episode = if item.index_number() > 0 {
+                item.index_number().to_string()
+            } else {
+                item.name()
+            };
+            (series_name, episode)
         } else {
-            (item.name(), "movie".to_string())
+            (item.name(), String::new())
         };
 
         let anime = {
@@ -1557,13 +1697,73 @@ impl MPVPage {
                 input
             }
         };
+        let mut tmdb_id = item.tmdb_id().and_then(|id| id.parse::<i32>().ok());
+
+        if tmdb_id.is_none() {
+            let is_episode = item.item_type() == "Episode";
+            // 1. 直接查自己（仅电影适用，剧集自身的 tmdb_id 可能不准）
+            if !is_episode {
+                let id = item.id();
+                if let Ok(info) = spawn_tokio(async move {
+                    JELLYFIN_CLIENT.get_item_info(&id).await
+                })
+                .await
+                {
+                    tmdb_id = info
+                        .provider_ids
+                        .and_then(|p| p.tmdb)
+                        .and_then(|id| id.parse::<i32>().ok());
+                    tracing::debug!(?tmdb_id, "manual_search: from item self");
+                }
+            }
+            if tmdb_id.is_none() {
+                if let Some(season_id) = item.season_id() {
+                    tracing::debug!(?season_id, "manual_search: trying season lookup");
+                    let season_id_clone = season_id.clone();
+                    if let Ok(season_item) = spawn_tokio(async move {
+                        JELLYFIN_CLIENT.get_item_info(&season_id_clone).await
+                    })
+                    .await
+                    {
+                        tmdb_id = season_item
+                            .provider_ids
+                            .and_then(|p| p.tmdb)
+                            .and_then(|id| id.parse::<i32>().ok());
+                        tracing::debug!(?tmdb_id, ?season_id, "manual_search: from season");
+                    }
+                } else {
+                    tracing::debug!("manual_search: no season_id on item");
+                }
+            }
+            if tmdb_id.is_none() {
+                if let Some(series_id) = item.series_id() {
+                    tracing::debug!(?series_id, "manual_search: trying series lookup");
+                    let series_id_clone = series_id.clone();
+                    if let Ok(series_item) = spawn_tokio(async move {
+                        JELLYFIN_CLIENT.get_item_info(&series_id_clone).await
+                    })
+                    .await
+                    {
+                        tmdb_id = series_item
+                            .provider_ids
+                            .and_then(|p| p.tmdb)
+                            .and_then(|id| id.parse::<i32>().ok());
+                        tracing::debug!(?tmdb_id, ?series_id, "manual_search: from series");
+                    }
+                } else {
+                    tracing::debug!("manual_search: no series_id on item");
+                }
+            }
+        }
+
         let time_milis = (item.playback_position_ticks() / 10000) as f64;
+        tracing::info!(anime, episode, ?tmdb_id, "Manual danmaku search");
 
         match self
             .request_danmaku(dandanapi::RequestEpisodes {
                 anime,
                 episode,
-                tmdb_id: None,
+                tmdb_id,
             })
             .await
         {
@@ -1576,7 +1776,7 @@ impl MPVPage {
                 self.imp().init_danmaku(danmaku, time_milis);
             }
             Err(e) => {
-                tracing::error!("Manual danmaku search error: {}", e);
+                tracing::error!("Manual danmaku search error: {e}");
                 self.imp()
                     .danmaku_page
                     .set_description(&gettext("No Danmaku Loaded"));
