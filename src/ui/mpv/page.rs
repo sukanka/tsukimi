@@ -100,7 +100,6 @@ mod imp {
         ui::{
             models::SETTINGS,
             mpv::{
-                MpvTimer,
                 VolumeBar,
                 menu_actions::MenuActions,
                 mpvglarea::MPVGLArea,
@@ -463,7 +462,7 @@ mod imp {
                     let tmdb_str = item.tmdb_id().unwrap_or_default();
                     obj.imp().danmaku_tmdb_row.set_text(&tmdb_str);
 
-                    if let Some(tmdb_id) = tmdb_str.parse::<i32>().ok() {
+                    if let Ok(tmdb_id) = tmdb_str.parse::<i32>() {
                         // tmdb_id 已就绪，异步获取官方标题覆盖
                         spawn(glib::clone!(
                             #[weak(rename_to = obj)]
@@ -619,18 +618,19 @@ mod imp {
         }
 
         pub fn pause_danmaku(&self) {
-            self.danmaku_area.stop_rendering();
+            self.danmaku_area.pause();
         }
 
         pub fn resume_danmaku(&self) {
-            self.danmaku_area
-                .start_rendering(MpvTimer::new(self.video.imp().mpv().mpv.clone()));
+            let position = self.video.position();
+            self.danmaku_area.seek(position * 1000.0);
+            self.danmaku_area.play();
         }
 
         pub fn init_danmaku(&self, danmaku: Vec<danmakw::Danmaku>, time_milis: f64) {
             self.danmaku_list.replace(Some(danmaku.clone()));
             self.danmaku_area.set_danmaku(danmaku);
-            self.danmaku_area.set_time_milis(time_milis);
+            self.danmaku_area.seek(time_milis);
         }
     }
 }
@@ -1307,6 +1307,7 @@ impl MPVPage {
                 return;
             };
             pixbuf.fill(0);
+            #[allow(deprecated)]
             let texture = gtk::gdk::Texture::for_pixbuf(&pixbuf);
             Some(gtk::gdk::Cursor::from_texture(&texture, 0, 0, None))
         };

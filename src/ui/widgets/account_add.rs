@@ -141,7 +141,7 @@ pub mod imp {
 
 glib::wrapper! {
     pub struct AccountWindow(ObjectSubclass<imp::AccountWindow>)
-    @extends gtk::Widget, adw::Dialog, @implements gtk::Accessible;
+    @extends gtk::Widget, adw::Dialog, @implements gtk::Accessible, gtk::Buildable, gtk::ConstraintTarget;
 }
 
 impl Default for AccountWindow {

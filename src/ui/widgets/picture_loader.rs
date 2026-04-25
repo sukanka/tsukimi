@@ -109,7 +109,7 @@ pub(crate) mod imp {
 
 glib::wrapper! {
     pub struct PictureLoader(ObjectSubclass<imp::PictureLoader>)
-        @extends gtk::Widget, adw::Bin, @implements gtk::Accessible;
+        @extends gtk::Widget, adw::Bin, @implements gtk::Accessible, gtk::Buildable, gtk::ConstraintTarget;
 }
 
 impl PictureLoader {
@@ -162,6 +162,7 @@ impl PictureLoader {
                             None::<&gio::Cancellable>,
                             move |r| match r {
                                 Ok(pixbuf) => {
+                                    #[allow(deprecated)]
                                     obj.imp().picture.set_paintable(Some(
                                         &gtk::gdk::Texture::for_pixbuf(&pixbuf),
                                     ));

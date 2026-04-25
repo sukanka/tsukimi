@@ -48,7 +48,7 @@ pub(crate) mod imp {
 glib::wrapper! {
 
     pub struct EpisodeButton(ObjectSubclass<imp::EpisodeButton>)
-        @extends gtk::Widget, gtk::Button;
+        @extends gtk::Widget, gtk::Button, @implements gtk::Actionable, gtk::Accessible, gtk::Buildable, gtk::ConstraintTarget;
 }
 
 impl EpisodeButton {
