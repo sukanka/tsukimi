@@ -1057,7 +1057,7 @@ dependencies = [
 [[package]]
 name = "dandanapi"
 version = "0.0.1"
-source = "git+https://github.com/sukanka/dandanapi.git#54eab44e7f25d9c307e53262825eab2305dfd3f3"
+source = "git+https://github.com/sukanka/dandanapi.git#4fdbe12844753f1f098ea72a63b6d82a5bc02367"
 dependencies = [
  "age",
  "base64 0.22.1",

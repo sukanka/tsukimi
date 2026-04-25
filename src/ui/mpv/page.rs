@@ -438,6 +438,7 @@ mod imp {
                 #[weak(rename_to = obj)]
                 obj,
                 move |_| {
+                    obj.rebuild_server_list();
                     let Some(item) = obj.current_video() else {
                         return;
                     };
