@@ -802,7 +802,7 @@ impl MPVPage {
                 imp.video.play(&video_url, per);
 
                 if SETTINGS.is_danmaku_enabled() {
-                    obj.imp().danmaku_area.clear_danmaku();
+                    imp.pause_danmaku();
                     obj.load_danmaku().await;
                 } else {
                     imp.danmaku_list.replace(None);
@@ -1622,6 +1622,8 @@ impl MPVPage {
                 self.imp()
                     .danmaku_page
                     .set_description(&gettext("No Danmaku Loaded"));
+                imp.danmaku_list.replace(None);
+                imp.danmaku_area.set_danmaku(Vec::new());
             }
         }
     }
