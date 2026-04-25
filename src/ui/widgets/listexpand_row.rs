@@ -63,7 +63,7 @@ mod imp {
 glib::wrapper! {
     /// A sidebar row expand servers/content
     pub struct ListExpandRow(ObjectSubclass<imp::ListExpandRow>)
-        @extends gtk::Widget, gtk::ListBoxRow, @implements gtk::Accessible;
+        @extends gtk::Widget, gtk::ListBoxRow, @implements gtk::Actionable, gtk::Accessible, gtk::Buildable, gtk::ConstraintTarget;
 }
 
 impl ListExpandRow {

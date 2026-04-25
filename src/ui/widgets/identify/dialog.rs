@@ -96,7 +96,7 @@ mod imp {
 glib::wrapper! {
     /// A identify dialog to search for external ids.
     pub struct IdentifyDialog(ObjectSubclass<imp::IdentifyDialog>)
-        @extends gtk::Widget, adw::Dialog, adw::PreferencesDialog, @implements gtk::Accessible, gtk::Root;
+        @extends gtk::Widget, adw::Dialog, adw::PreferencesDialog, @implements gtk::Accessible, gtk::Buildable, gtk::ConstraintTarget, gtk::Root;
 }
 
 #[template_callbacks]

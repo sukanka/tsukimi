@@ -80,7 +80,7 @@ mod imp {
 
 glib::wrapper! {
     pub struct TsukimiApplication(ObjectSubclass<imp::TsukimiApplication>)
-        @extends gtk::gio::Application, gtk::Application, adw::Application, @implements gtk::Accessible;
+        @extends gtk::gio::Application, gtk::Application, adw::Application, @implements gtk::gio::ActionMap, gtk::gio::ActionGroup, gtk::Accessible;
 }
 
 impl Default for TsukimiApplication {
