@@ -462,7 +462,7 @@ mod imp {
                     let tmdb_str = item.tmdb_id().unwrap_or_default();
                     obj.imp().danmaku_tmdb_row.set_text(&tmdb_str);
 
-                    if let Some(tmdb_id) = tmdb_str.parse::<i32>().ok() {
+                    if let Ok(tmdb_id) = tmdb_str.parse::<i32>() {
                         // tmdb_id 已就绪，异步获取官方标题覆盖
                         spawn(glib::clone!(
                             #[weak(rename_to = obj)]
