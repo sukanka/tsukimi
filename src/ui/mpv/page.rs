@@ -874,9 +874,15 @@ impl MPVPage {
                             obj.imp().pause_danmaku();
                             obj.update_seeking(true);
                         }
-                        ListenEvent::PausedForCache(false) | ListenEvent::PlaybackRestart => {
+                        ListenEvent::PausedForCache(false) => {
                             obj.imp().resume_danmaku();
                             obj.update_seeking(false);
+                        }
+                        ListenEvent::PlaybackRestart => {
+                            obj.imp().resume_danmaku();
+                            obj.update_seeking(false);
+                            let position = obj.imp().video.position();
+                            obj.notify_seeked((position * 1000.0) as i64);
                         }
                         ListenEvent::Eof(value) => {
                             obj.on_end_file(value);
