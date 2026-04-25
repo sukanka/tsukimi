@@ -499,7 +499,7 @@ impl JellyfinClient {
 
     pub async fn get_item_info(&self, id: &str) -> Result<SimpleListItem> {
         let path = format!("Users/{}/Items/{}", self.user_id().await, id);
-        let params = [("Fields", "ShareLevel,DateCreated")];
+        let params = [("Fields", "ShareLevel,DateCreated,ProviderIds")];
         self.request(&path, &params).await
     }
 
