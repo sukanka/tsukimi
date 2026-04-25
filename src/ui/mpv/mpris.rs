@@ -37,10 +37,7 @@ use crate::{
         spawn,
     },
 };
-use tracing::{
-    info,
-    warn,
-};
+use tracing::warn;
 
 impl MPVPage {
     pub async fn initialize_mpris(&self, app_id: &str) -> Result<()> {
@@ -58,19 +55,34 @@ impl MPVPage {
     }
 
     pub fn mpris_properties_changed(&self, property: impl IntoIterator<Item = Property> + 'static) {
+        #[cfg(target_os = "linux")]
+        let will_init = self.mpris_server().is_none()
+            && !self.imp().mpris_initializing.replace(true);
+        #[cfg(not(target_os = "linux"))]
+        let will_init = false;
+
         spawn(glib::clone!(
             #[weak(rename_to=imp)]
             self,
             async move {
-                match imp.mpris_server() {
-                    Some(server) => {
-                        if let Err(err) = server.properties_changed(property).await {
-                            warn!("Failed to emit properties changed: {}", err);
-                        }
+                if will_init {
+                    let app_id = format!("{}.{}", APP_ID, "mpv");
+                    if let Err(e) = imp.initialize_mpris(&app_id).await {
+                        warn!("Failed to initialize mpris server: {}", e);
                     }
-                    None => {
-                        info!("Failed to get MPRIS server.");
+                    #[cfg(target_os = "linux")]
+                    imp.imp().mpris_initializing.set(false);
+                }
+                // If another future is still initializing, wait for it
+                // so we don't drop this property change.
+                let server = loop {
+                    if let Some(server) = imp.mpris_server() {
+                        break server;
                     }
+                    glib::timeout_future(std::time::Duration::from_millis(10)).await;
+                };
+                if let Err(err) = server.properties_changed(property).await {
+                    warn!("Failed to emit properties changed: {}", err);
                 }
             }
         ));
@@ -81,17 +93,12 @@ impl MPVPage {
             #[weak(rename_to=obj)]
             self,
             async move {
-                match obj.mpris_server() {
-                    Some(server) => {
-                        let signal = Signal::Seeked {
-                            position: Time::from_millis(position),
-                        };
-                        if let Err(err) = server.emit(signal).await {
-                            warn!("Failed to emit mpris_seeked: {}", err);
-                        }
-                    }
-                    None => {
-                        info!("Failed to get MPRIS server.");
+                if let Some(server) = obj.mpris_server() {
+                    let signal = Signal::Seeked {
+                        position: Time::from_millis(position),
+                    };
+                    if let Err(err) = server.emit(signal).await {
+                        warn!("Failed to emit mpris_seeked: {}", err);
                     }
                 }
             }

@@ -37,10 +37,7 @@ use crate::{
         spawn,
     },
 };
-use tracing::{
-    info,
-    warn,
-};
+use tracing::warn;
 
 impl MusicPlayer {
     pub async fn initialize_mpris(&self) -> Result<()> {
@@ -58,19 +55,33 @@ impl MusicPlayer {
     }
 
     pub fn mpris_properties_changed(&self, property: impl IntoIterator<Item = Property> + 'static) {
+        #[cfg(target_os = "linux")]
+        let will_init = self.mpris_server().is_none()
+            && !self.imp().mpris_initializing.replace(true);
+        #[cfg(not(target_os = "linux"))]
+        let will_init = false;
+
         spawn(glib::clone!(
             #[weak(rename_to=imp)]
             self,
             async move {
-                match imp.mpris_server() {
-                    Some(server) => {
-                        if let Err(err) = server.properties_changed(property).await {
-                            warn!("Failed to emit properties changed: {}", err);
-                        }
+                if will_init {
+                    if let Err(e) = imp.initialize_mpris().await {
+                        warn!("Failed to initialize mpris server: {}", e);
                     }
-                    None => {
-                        info!("Failed to get MPRIS server.");
+                    #[cfg(target_os = "linux")]
+                    imp.imp().mpris_initializing.set(false);
+                }
+                // If another future is still initializing, wait for it
+                // so we don't drop this property change.
+                let server = loop {
+                    if let Some(server) = imp.mpris_server() {
+                        break server;
                     }
+                    glib::timeout_future(std::time::Duration::from_millis(10)).await;
+                };
+                if let Err(err) = server.properties_changed(property).await {
+                    warn!("Failed to emit properties changed: {}", err);
                 }
             }
         ));
@@ -81,17 +92,12 @@ impl MusicPlayer {
             #[weak(rename_to=obj)]
             self,
             async move {
-                match obj.mpris_server() {
-                    Some(server) => {
-                        let signal = Signal::Seeked {
-                            position: Time::from_millis(position),
-                        };
-                        if let Err(err) = server.emit(signal).await {
-                            warn!("Failed to emit mpris_seeked: {}", err);
-                        }
-                    }
-                    None => {
-                        info!("Failed to get MPRIS server.");
+                if let Some(server) = obj.mpris_server() {
+                    let signal = Signal::Seeked {
+                        position: Time::from_millis(position),
+                    };
+                    if let Err(err) = server.emit(signal).await {
+                        warn!("Failed to emit mpris_seeked: {}", err);
                     }
                 }
             }
@@ -101,6 +107,10 @@ impl MusicPlayer {
     pub fn notify_mpris_song_changed(&self, has_prev: bool, has_next: bool) {
         self.mpris_properties_changed([
             Property::Metadata(self.metadata().clone()),
+            Property::CanPlay(true),
+            Property::CanPause(true),
+            Property::CanSeek(true),
+            Property::PlaybackStatus(PlaybackStatus::Playing),
             Property::CanGoPrevious(has_prev),
             Property::CanGoNext(has_next),
         ]);
