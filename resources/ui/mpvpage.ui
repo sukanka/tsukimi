@@ -649,6 +649,12 @@
                           </object>
                         </child>
                         <child>
+                          <object class="AdwEntryRow" id="danmaku_tmdb_row">
+                            <property name="title" translatable="yes">TMDB ID</property>
+                            <property name="show-apply-button">false</property>
+                          </object>
+                        </child>
+                        <child>
                           <object class="AdwButtonRow">
                             <property name="title" translatable="yes">Search</property>
                             <signal name="activated" handler="on_danmaku_search_clicked" swapped="yes"/>
