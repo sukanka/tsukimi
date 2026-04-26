@@ -198,7 +198,7 @@ pub enum ListenEvent {
     Speed(f64),
     Shutdown,
     DemuxerCacheTime(i64),
-    TimePos(i64),
+    TimePos(f64),
     PausedForCache(bool),
     ChapterList(ChapterList),
 }
@@ -236,6 +236,13 @@ impl TsukimiMPV {
 
     pub fn add_sub(&self, url: &str) {
         self.command("sub-add", &[url, "select"]);
+    }
+
+    pub fn clear_danmaku_overlay(&self) {
+        let mpv = Arc::clone(&self.mpv);
+        spawn_tokio_without_await(async move {
+            let _ = mpv.command("osd-overlay", &["0", "remove"]);
+        });
     }
 
     pub fn load_video(&self, url: &str) {
@@ -367,7 +374,7 @@ impl TsukimiMPV {
             .observe_property("demuxer-cache-time", libmpv2::Format::Int64, 5)
             .unwrap();
         event_context
-            .observe_property("time-pos", libmpv2::Format::Int64, 6)
+            .observe_property("time-pos", libmpv2::Format::Double, 6)
             .unwrap();
         event_context
             .observe_property("volume", libmpv2::Format::Int64, 7)
@@ -379,6 +386,7 @@ impl TsukimiMPV {
         let handle = std::thread::Builder::new()
             .name("mpv event loop".into())
             .spawn(move || {
+                let mpv_ctx = mpv.ctx.as_ptr();
                 loop {
                     let state = event_thread_alive.load(std::sync::atomic::Ordering::SeqCst);
                     match state {
@@ -443,9 +451,25 @@ impl TsukimiMPV {
                                     }
                                 }
                                 "time-pos" => {
-                                    if let PropertyData::Int64(time) = change {
+                                    if let PropertyData::Double(time) = change {
                                         let _ =
                                             MPV_EVENT_CHANNEL.tx.send(ListenEvent::TimePos(time));
+                                        if let Some(ref state) =
+                                            *super::danmaku_ass::OVERLAY_STATE.read().unwrap()
+                                        {
+                                            let (events, config) = state;
+                                            let time_ms = time * 1000.0;
+                                            let data = super::danmaku_ass::render_overlay_data(
+                                                time_ms, events, config,
+                                            );
+                                            unsafe {
+                                                run_cmd(
+                                                    mpv_ctx,
+                                                    "osd-overlay",
+                                                    &["0", "ass-events", &data],
+                                                );
+                                            }
+                                        }
                                     }
                                 }
                                 "paused-for-cache" => {
@@ -697,3 +721,19 @@ fn keyval_to_keystr(keyval: u32) -> Option<String> {
         .map(|(keystr, _)| keystr.to_string())
         .or(Some(key_name))
 }
+
+// ---- helpers: called ONLY from the mpv event-loop thread ----
+
+unsafe fn run_cmd(ctx: *mut libmpv2_sys::mpv_handle, cmd: &str, args: &[&str]) -> bool {
+    unsafe {
+        let c_args: Vec<std::ffi::CString> = std::iter::once(cmd)
+            .chain(args.iter().copied())
+            .map(|s| std::ffi::CString::new(s).unwrap())
+            .collect();
+        let mut ptrs: Vec<*const std::ffi::c_char> = c_args.iter().map(|s| s.as_ptr()).collect();
+        ptrs.push(std::ptr::null());
+        libmpv2_sys::mpv_command(ctx, ptrs.as_mut_ptr()) >= 0
+    }
+}
+
+

@@ -1,4 +1,5 @@
 pub mod control_sidebar;
+pub mod danmaku_ass;
 pub mod danmaku_timer;
 pub mod menu_actions;
 #[cfg(target_os = "linux")]
