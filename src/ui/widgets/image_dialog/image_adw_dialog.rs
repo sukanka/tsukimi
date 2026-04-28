@@ -186,7 +186,7 @@ mod imp {
 glib::wrapper! {
 
     pub struct ImagesDialog(ObjectSubclass<imp::ImagesDialog>)
-        @extends gtk::Widget, adw::Dialog, adw::PreferencesDialog, @implements gtk::Accessible, gtk::Root;
+        @extends gtk::Widget, adw::Dialog, adw::PreferencesDialog, @implements gtk::Accessible, gtk::Buildable, gtk::ConstraintTarget, gtk::Root;
 }
 
 #[template_callbacks]

@@ -142,7 +142,7 @@ pub(crate) mod imp {
 glib::wrapper! {
     /// A page for displaying an album.
     pub struct AlbumPage(ObjectSubclass<imp::AlbumPage>)
-        @extends gtk::Widget, adw::Dialog, adw::NavigationPage, @implements gtk::Accessible;
+        @extends gtk::Widget, adw::Dialog, adw::NavigationPage, @implements gtk::Accessible, gtk::Buildable, gtk::ConstraintTarget;
 }
 
 use crate::ui::widgets::disc_box::DiscBox;
@@ -188,10 +188,7 @@ impl AlbumPage {
             imp.artist_label.set_text("...");
 
             let duration = item.run_time_ticks();
-            let release = format!(
-                "{}",
-                run_time_ticks_to_label(duration as u64)
-            );
+            let release = run_time_ticks_to_label(duration).to_string();
             imp.released_label.set_text(&release);
         }
 

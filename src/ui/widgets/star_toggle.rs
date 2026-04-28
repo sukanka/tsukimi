@@ -39,7 +39,7 @@ pub(crate) mod imp {
 glib::wrapper! {
 
     pub struct StarToggle(ObjectSubclass<imp::StarToggle>)
-        @extends gtk::Widget, gtk::ToggleButton, gtk::Button;
+        @extends gtk::Widget, gtk::ToggleButton, gtk::Button, @implements gtk::Actionable, gtk::Accessible, gtk::Buildable, gtk::ConstraintTarget;
 }
 
 impl Default for StarToggle {

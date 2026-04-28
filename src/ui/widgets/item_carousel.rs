@@ -19,9 +19,7 @@ pub mod imp {
     use super::CUBIC_POINTS;
 
     static MASK: Lazy<gdk::RGBA> = Lazy::new(|| {
-        if gtk::Settings::default()
-            .map(|s| s.is_gtk_application_prefer_dark_theme())
-            .unwrap_or(false)
+        if adw::StyleManager::default().is_dark()
         {
             gdk::RGBA::new(0.0, 0.0, 0.0, 0.4)
         } else {
