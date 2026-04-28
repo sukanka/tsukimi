@@ -16,6 +16,7 @@ use gtk::{
 use danmakw::DanmakwArea;
 
 use super::{
+    danmaku_ass,
     mpvglarea::MPVGLArea,
     tsukimi_mpv::{
         ChapterList,
@@ -73,6 +74,10 @@ use anyhow::Result;
 const MIN_MOTION_TIME: i64 = 100000;
 const PREV_CHAPTER_KEYVAL: u32 = 65366;
 const NEXT_CHAPTER_KEYVAL: u32 = 65365;
+
+fn is_libmpv() -> bool {
+    SETTINGS.mpv_video_output() == 0
+}
 
 mod imp {
 
@@ -631,8 +636,74 @@ mod imp {
 
         pub fn init_danmaku(&self, danmaku: Vec<danmakw::Danmaku>, time_milis: f64) {
             self.danmaku_list.replace(Some(danmaku.clone()));
-            self.danmaku_area.set_danmaku(danmaku);
-            self.danmaku_area.set_time_milis(time_milis);
+
+            if is_libmpv() {
+                self.danmaku_area.set_visible(true);
+                self.danmaku_area.set_danmaku(danmaku);
+                self.danmaku_area.set_time_milis(time_milis);
+            } else {
+                self.danmaku_area.set_visible(false);
+                self.load_danmaku_ass(&danmaku);
+            }
+        }
+
+        pub fn load_danmaku_ass(&self, danmaku: &[danmakw::Danmaku]) {
+            let danmaku_area = &self.danmaku_area;
+            let opacity = self.danmaku_opacity_adj.value();
+
+            let font_size = if danmaku_area.font_size() > 0 {
+                danmaku_area.font_size()
+            } else {
+                24
+            };
+            let max_scroll = if danmaku_area.max_lines() > 0 {
+                danmaku_area.max_lines()
+            } else {
+                20
+            };
+            let max_top = if danmaku_area.top_center_max_lines() > 0 {
+                danmaku_area.top_center_max_lines()
+            } else {
+                5
+            };
+            let max_bottom = if danmaku_area.bottom_center_max_lines() > 0 {
+                danmaku_area.bottom_center_max_lines()
+            } else {
+                5
+            };
+            let row_spacing = danmaku_area.row_spacing();
+            let top_padding = danmaku_area.top_padding();
+            let speed = if danmaku_area.speed_factor() > 0.0 {
+                danmaku_area.speed_factor()
+            } else {
+                1.0
+            };
+            let font_name = danmaku_area.font_name().to_string();
+
+            let config = danmaku_ass::AssDanmakuConfig {
+                font_name,
+                font_size,
+                row_spacing,
+                max_scroll_lines: max_scroll,
+                max_top_lines: max_top,
+                max_bottom_lines: max_bottom,
+                top_padding,
+                speed_factor: speed.max(0.1),
+                opacity: opacity.max(0.01),
+            };
+
+            let events = danmaku_ass::prepare_overlay_events(danmaku, &config);
+            tracing::info!(
+                "Danmaku overlay: {} comments → {} events",
+                danmaku.len(),
+                events.len()
+            );
+            *danmaku_ass::OVERLAY_STATE.write().unwrap() = Some((events, config));
+        }
+
+        pub fn remove_danmaku_ass(&self) {
+            *danmaku_ass::OVERLAY_STATE.write().unwrap() = None;
+            self.video.imp().mpv().clear_danmaku_overlay();
         }
     }
 }
@@ -1073,8 +1144,8 @@ impl MPVPage {
         self.imp().volume_bar.set_level(value as f64 / 100.0);
     }
 
-    fn scale_cb(&self, value: i64) {
-        self.imp().video_scale.set_value(value as f64);
+    fn scale_cb(&self, value: f64) {
+        self.imp().video_scale.set_value(value);
     }
 
     #[template_callback]
@@ -1327,6 +1398,7 @@ impl MPVPage {
         self.handle_callback(BackType::Stop);
         self.remove_timeout();
         self.imp().pause_danmaku();
+        self.imp().remove_danmaku_ass();
 
         let mpv = self.mpv();
         mpv.pause(true);
@@ -1655,7 +1727,11 @@ impl MPVPage {
                     .danmaku_page
                     .set_description(&gettext("No Danmaku Loaded"));
                 imp.danmaku_list.replace(None);
-                imp.danmaku_area.set_danmaku(Vec::new());
+                if is_libmpv() {
+                    imp.danmaku_area.set_danmaku(Vec::new());
+                } else {
+                    imp.remove_danmaku_ass();
+                }
             }
         }
     }
@@ -1726,11 +1802,14 @@ impl MPVPage {
     #[template_callback]
     pub fn on_danmaku_switch_state_set(&self, state: bool) -> bool {
         self.imp().danmaku_area.set_enable_danmaku(state);
-
         if state {
             if let Some(danmaku) = self.imp().danmaku_list.borrow().as_ref() {
-                self.imp().danmaku_area.set_danmaku(danmaku.to_owned());
-                self.imp().resume_danmaku();
+                if is_libmpv() {
+                    self.imp().danmaku_area.set_danmaku(danmaku.to_owned());
+                    self.imp().resume_danmaku();
+                } else {
+                    self.imp().load_danmaku_ass(danmaku);
+                }
             } else {
                 spawn(glib::clone!(
                     #[weak(rename_to = obj)]
@@ -1741,8 +1820,12 @@ impl MPVPage {
                 ));
             }
         } else {
-            self.imp().danmaku_area.clear_danmaku();
-            self.imp().pause_danmaku();
+            if is_libmpv() {
+                self.imp().danmaku_area.clear_danmaku();
+                self.imp().pause_danmaku();
+            } else {
+                self.imp().remove_danmaku_ass();
+            }
         }
 
         let _ = SETTINGS.set_danmaku_enabled(state);

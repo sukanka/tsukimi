@@ -6,6 +6,7 @@ use std::{
         atomic::AtomicU32,
     },
     thread::JoinHandle,
+    time::Instant,
 };
 
 use libmpv2::{
@@ -198,7 +199,7 @@ pub enum ListenEvent {
     Speed(f64),
     Shutdown,
     DemuxerCacheTime(i64),
-    TimePos(i64),
+    TimePos(f64),
     PausedForCache(bool),
     ChapterList(ChapterList),
 }
@@ -236,6 +237,13 @@ impl TsukimiMPV {
 
     pub fn add_sub(&self, url: &str) {
         self.command("sub-add", &[url, "select"]);
+    }
+
+    pub fn clear_danmaku_overlay(&self) {
+        let mpv = Arc::clone(&self.mpv);
+        spawn_tokio_without_await(async move {
+            let _ = mpv.command("osd-overlay", &["0", "remove"]);
+        });
     }
 
     pub fn load_video(&self, url: &str) {
@@ -367,7 +375,7 @@ impl TsukimiMPV {
             .observe_property("demuxer-cache-time", libmpv2::Format::Int64, 5)
             .unwrap();
         event_context
-            .observe_property("time-pos", libmpv2::Format::Int64, 6)
+            .observe_property("time-pos", libmpv2::Format::Double, 6)
             .unwrap();
         event_context
             .observe_property("volume", libmpv2::Format::Int64, 7)
@@ -375,19 +383,51 @@ impl TsukimiMPV {
         event_context
             .observe_property("chapter-list", libmpv2::Format::Node, 8)
             .unwrap();
+        event_context
+            .observe_property("speed", libmpv2::Format::Double, 9)
+            .unwrap();
         let event_thread_alive = self.event_thread_alive.to_owned();
         let handle = std::thread::Builder::new()
             .name("mpv event loop".into())
             .spawn(move || {
+                let mpv_ctx = mpv.ctx.as_ptr();
+                let mut last_time: f64 = 0.0;
+                let mut last_instant = Instant::now();
+                let mut is_paused = mpv.get_property::<bool>("pause").unwrap_or(true);
+                let mut has_time = false;
+
+                let update_overlay = |t: f64| unsafe {
+                    if let Some(ref state) =
+                        *super::danmaku_ass::OVERLAY_STATE.read().unwrap()
+                    {
+                        let (events, config) = state;
+                        let data = super::danmaku_ass::render_overlay_data(
+                            t * 1000.0, events, config,
+                        );
+                        run_cmd(mpv_ctx, "osd-overlay", &["0", "ass-events", &data]);
+                    }
+                };
+
                 loop {
                     let state = event_thread_alive.load(std::sync::atomic::Ordering::SeqCst);
                     match state {
                         SHUTDOWN => break,
-                        PAUSED => atomic_wait::wait(&event_thread_alive, PAUSED),
+                        PAUSED => {
+                            has_time = false;
+                            atomic_wait::wait(&event_thread_alive, PAUSED);
+                        }
                         _ => (),
                     }
 
-                    match event_context.wait_event(1000.0) {
+                    let has_overlay =
+                        super::danmaku_ass::OVERLAY_STATE.read().unwrap().is_some();
+                    let timeout = if has_overlay && has_time && !is_paused {
+                        0.016
+                    } else {
+                        1000.0
+                    };
+
+                    match event_context.wait_event(timeout) {
                         Some(Ok(event)) => match event {
                             Event::PropertyChange { name, change, .. } => match name {
                                 "duration" => {
@@ -398,6 +438,16 @@ impl TsukimiMPV {
                                 }
                                 "pause" => {
                                     if let PropertyData::Flag(pause) = change {
+                                        is_paused = pause;
+                                        if !pause {
+                                            if let Ok(t) =
+                                                mpv.get_property::<f64>("time-pos")
+                                            {
+                                                last_time = t;
+                                                last_instant = Instant::now();
+                                                has_time = true;
+                                            }
+                                        }
                                         let _ =
                                             MPV_EVENT_CHANNEL.tx.send(ListenEvent::Pause(pause));
                                     }
@@ -443,9 +493,13 @@ impl TsukimiMPV {
                                     }
                                 }
                                 "time-pos" => {
-                                    if let PropertyData::Int64(time) = change {
+                                    if let PropertyData::Double(time) = change {
+                                        last_time = time;
+                                        last_instant = Instant::now();
+                                        has_time = true;
                                         let _ =
                                             MPV_EVENT_CHANNEL.tx.send(ListenEvent::TimePos(time));
+                                        update_overlay(time);
                                     }
                                 }
                                 "paused-for-cache" => {
@@ -460,9 +514,15 @@ impl TsukimiMPV {
                                 _ => {}
                             },
                             Event::Seek { .. } => {
+                                has_time = false;
                                 let _ = MPV_EVENT_CHANNEL.tx.send(ListenEvent::Seek);
                             }
                             Event::PlaybackRestart { .. } => {
+                                if let Ok(t) = mpv.get_property::<f64>("time-pos") {
+                                    last_time = t;
+                                    last_instant = Instant::now();
+                                    has_time = true;
+                                }
                                 let _ = MPV_EVENT_CHANNEL.tx.send(ListenEvent::PlaybackRestart);
                             }
                             Event::EndFile(r) => {
@@ -481,7 +541,16 @@ impl TsukimiMPV {
                                 .tx
                                 .send(ListenEvent::Error(e.to_user_facing()));
                         }
-                        None => {}
+                        None => {
+                            // High-frequency timer tick: extrapolate time from
+                            // last time-pos using wall-clock delta.
+                            if has_overlay && has_time {
+                                let elapsed = last_instant.elapsed().as_secs_f64();
+                                let speed = mpv.get_property::<f64>("speed").unwrap_or(1.0);
+                                let t = last_time + elapsed * speed;
+                                update_overlay(t);
+                            }
+                        }
                     };
                 }
             })
@@ -697,3 +766,19 @@ fn keyval_to_keystr(keyval: u32) -> Option<String> {
         .map(|(keystr, _)| keystr.to_string())
         .or(Some(key_name))
 }
+
+// ---- helpers: called ONLY from the mpv event-loop thread ----
+
+unsafe fn run_cmd(ctx: *mut libmpv2_sys::mpv_handle, cmd: &str, args: &[&str]) -> bool {
+    unsafe {
+        let c_args: Vec<std::ffi::CString> = std::iter::once(cmd)
+            .chain(args.iter().copied())
+            .map(|s| std::ffi::CString::new(s).unwrap())
+            .collect();
+        let mut ptrs: Vec<*const std::ffi::c_char> = c_args.iter().map(|s| s.as_ptr()).collect();
+        ptrs.push(std::ptr::null());
+        libmpv2_sys::mpv_command(ctx, ptrs.as_mut_ptr()) >= 0
+    }
+}
+
+

@@ -46,6 +46,7 @@ fnv = "1.0.7"
 rand = "0.9.2"
 base64 = "0.22.1"
 libmpv2 = "4.1.0"
+libmpv2-sys = "4.0.0"
 danmakw = { git = "https://github.com/tsukinaha/danmakw.git" }
 dandanapi = { git = "https://github.com/sukanka/dandanapi.git" }
 glow = "0.16.0"
