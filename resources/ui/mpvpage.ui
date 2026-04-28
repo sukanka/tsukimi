@@ -290,9 +290,9 @@
                           </object>
                         </child>
                         <child>
-                          <object class="GtkMenuButton" id="danmaku_button">
+                          <object class="GtkButton" id="danmaku_button">
                             <property name="icon-name">card-bulleted-symbolic</property>
-                            <property name="popover">danmaku_popover</property>
+                            <signal name="clicked" handler="on_danmaku_button_clicked" swapped="yes"/>
                           </object>
                         </child>
                         <child>
@@ -493,6 +493,9 @@
     <property name="position">top</property>
     <property name="autohide">False</property>
     <property name="cascade-popdown">False</property>
+    <style>
+      <class name="menu" />
+    </style>
     <child>
       <object class="AdwNavigationView">
         <child>

@@ -148,7 +148,7 @@ mod imp {
         #[template_child]
         pub menu_button: TemplateChild<gtk::MenuButton>,
         #[template_child]
-        pub danmaku_button: TemplateChild<gtk::MenuButton>,
+        pub danmaku_button: TemplateChild<gtk::Button>,
         #[template_child]
         pub menu_popover: TemplateChild<gtk::Popover>,
         #[template_child]
@@ -329,6 +329,8 @@ mod imp {
     impl ObjectImpl for MPVPage {
         fn constructed(&self) {
             self.parent_constructed();
+
+            self.danmaku_popover.get().set_parent(&*self.menu_button);
 
             // Route switch removed from mpv (playing) page per user requirement
             self.route_switch_button.get().set_visible(false);
@@ -1275,7 +1277,7 @@ impl MPVPage {
             return false;
         }
 
-        if self.imp().danmaku_button.is_active() {
+        if self.imp().danmaku_popover.get().is_visible() {
             return false;
         }
 
@@ -1410,11 +1412,29 @@ impl MPVPage {
 
     #[template_callback]
     fn left_click_cb(&self) {
-        if self.imp().danmaku_button.is_active() {
-            self.imp().danmaku_popover.popdown();
+        let imp = self.imp();
+        let popover = imp.danmaku_popover.get();
+        if popover.is_visible() {
+            popover.popdown();
             return;
         }
-        self.imp().video.pause();
+        imp.video.pause();
+    }
+
+    #[template_callback]
+    fn on_danmaku_button_clicked(&self) {
+        let imp = self.imp();
+        let popover = imp.danmaku_popover.get();
+        if popover.is_visible() {
+            popover.popdown();
+        } else {
+            let alloc = imp.danmaku_button.allocation();
+            if let Some((x, y)) = imp.danmaku_button.translate_coordinates(&*imp.menu_button, 0.0, 0.0) {
+                let rect = gtk::gdk::Rectangle::new(x as i32, y as i32, alloc.width(), alloc.height());
+                popover.set_pointing_to(Some(&rect));
+            }
+            popover.popup();
+        }
     }
 
     #[template_callback]
