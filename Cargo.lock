@@ -2136,7 +2136,7 @@ dependencies = [
 [[package]]
 name = "glyphon"
 version = "0.9.0"
-source = "git+https://github.com/tsukinaha/glyphon.git#3a0881aa2db4877e65765320ac4ec7d837e247c7"
+source = "git+https://github.com/sukanka/glyphon.git?branch=fix-pad#b7ffb367cb9e566937f9d7ad9100620c7393143e"
 dependencies = [
  "cosmic-text",
  "etagere",
