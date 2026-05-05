@@ -1,6 +1,9 @@
 #![allow(deprecated)]
 // FIXME: replace GtkShortcutsWindow when the replacement is appeared on libadwaita
 
+use std::cell::{Cell, RefCell};
+use std::rc::Rc;
+
 use adw::prelude::*;
 use gettextrs::gettext;
 use glib::Object;
@@ -1632,22 +1635,49 @@ impl MPVPage {
         tracing::info!(anime = search_anime, episode, ?tmdb_id, "Auto danmaku search");
 
         let imp = self.imp();
-        let danmaku = self
-            .request_danmaku(dandanapi::RequestEpisodes {
+        let response = self
+            .search_episodes(dandanapi::RequestEpisodes {
                 anime: search_anime,
                 episode,
                 tmdb_id,
             })
             .await;
 
-        match danmaku {
-            Ok(danmaku) => {
-                self.imp().danmaku_page.set_description(&format!(
-                    "{} {}",
-                    danmaku.len(),
-                    gettext("Danmaku Loaded")
-                ));
-                imp.init_danmaku(danmaku, time_milis);
+        match response {
+            Ok(response) => {
+                let episode_id = response
+                    .animes
+                    .and_then(|anims| anims.first()?.episodes.first().map(|ep| ep.episode_id));
+
+                match episode_id {
+                    Some(episode_id) => {
+                        match self.request_danmaku(episode_id).await {
+                            Ok(danmaku) => {
+                                self.imp().danmaku_page.set_description(&format!(
+                                    "{} {}",
+                                    danmaku.len(),
+                                    gettext("Danmaku Loaded")
+                                ));
+                                imp.init_danmaku(danmaku, time_milis);
+                            }
+                            Err(e) => {
+                                tracing::error!("Loading danmaku error: {}", e);
+                                self.imp()
+                                    .danmaku_page
+                                    .set_description(&gettext("No Danmaku Loaded"));
+                                imp.danmaku_list.replace(None);
+                                imp.danmaku_area.set_danmaku(Vec::new());
+                            }
+                        }
+                    }
+                    None => {
+                        self.imp()
+                            .danmaku_page
+                            .set_description(&gettext("No Danmaku Loaded"));
+                        imp.danmaku_list.replace(None);
+                        imp.danmaku_area.set_danmaku(Vec::new());
+                    }
+                }
             }
             Err(e) => {
                 tracing::error!("Loading danmaku error: {}", e);
@@ -1660,9 +1690,10 @@ impl MPVPage {
         }
     }
 
-    pub async fn request_danmaku(
+    /// Search episodes from dandanapi, returns raw response for selection
+    pub async fn search_episodes(
         &self, request_episodes: dandanapi::RequestEpisodes,
-    ) -> Result<Vec<danmakw::Danmaku>> {
+    ) -> Result<dandanapi::SearchEpisodesResponse> {
         let client = self
             .imp()
             .danmaku_client
@@ -1671,16 +1702,20 @@ impl MPVPage {
 
         let route = client.route(dandanapi::Episodes(request_episodes));
 
-        let response = spawn_tokio(async move {
+        spawn_tokio(async move {
             let response = route.await?;
-            Ok::<dandanapi::SearchEpisodesResponse, anyhow::Error>(response)
+            Ok(response)
         })
-        .await?;
+        .await
+    }
 
-        let episode_id = response
-            .animes
-            .and_then(|anims| anims.first()?.episodes.first().map(|ep| ep.episode_id))
-            .ok_or_else(|| anyhow::anyhow!("No episode found"))?;
+    /// Load danmaku comments for a specific episode_id
+    pub async fn request_danmaku(&self, episode_id: i64) -> Result<Vec<danmakw::Danmaku>> {
+        let client = self
+            .imp()
+            .danmaku_client
+            .get()
+            .ok_or_else(|| anyhow::anyhow!("Danmaku client not initialized"))?;
 
         let route = client.route(dandanapi::Comments {
             episode_id,
@@ -1764,59 +1799,30 @@ impl MPVPage {
             return;
         };
 
-        let is_movie = item.item_type() == "Movie";
-        let (default_anime, default_episode) = if is_movie {
-            (item.name(), String::new())
-        } else if let Some(series_name) = item.series_name() {
-            let episode = if item.index_number() > 0 {
-                item.index_number().to_string()
-            } else {
-                item.name()
-            };
-            (series_name, episode)
-        } else {
-            (item.name(), String::new())
-        };
-
-        let anime = {
-            let input = self.imp().danmaku_anime_row.text().trim().to_string();
-            if input.is_empty() { default_anime } else { input }
-        };
-        let episode = {
-            let input = self.imp().danmaku_episode_row.text().trim().to_string();
-            if input.is_empty() {
-                default_episode
-            } else {
-                input
-            }
-        };
-        let tmdb_id = {
-            let input = self.imp().danmaku_tmdb_row.text().trim().to_string();
-            if input.is_empty() {
-                None
-            } else {
-                input.parse::<i32>().ok()
-            }
-        };
+        let anime = self.imp().danmaku_anime_row.text().trim().to_string();
+        let episode = self.imp().danmaku_episode_row.text().trim().to_string();
+        let tmdb_id = self
+            .imp()
+            .danmaku_tmdb_row
+            .text()
+            .trim()
+            .to_string()
+            .parse::<i32>()
+            .ok();
 
         let time_milis = (item.playback_position_ticks() / 10000) as f64;
         tracing::info!(anime, episode, ?tmdb_id, "Manual danmaku search");
 
         match self
-            .request_danmaku(dandanapi::RequestEpisodes {
+            .search_episodes(dandanapi::RequestEpisodes {
                 anime,
                 episode,
                 tmdb_id,
             })
             .await
         {
-            Ok(danmaku) => {
-                self.imp().danmaku_page.set_description(&format!(
-                    "{} {}",
-                    danmaku.len(),
-                    gettext("Danmaku Loaded")
-                ));
-                self.imp().init_danmaku(danmaku, time_milis);
+            Ok(response) => {
+                self.show_danmaku_selection_dialog(response, time_milis);
             }
             Err(e) => {
                 tracing::error!("Manual danmaku search error: {e}");
@@ -1825,6 +1831,180 @@ impl MPVPage {
                     .set_description(&gettext("No Danmaku Loaded"));
                 self.toast(gettext("No Danmaku Loaded"));
             }
+        }
+    }
+
+    fn show_danmaku_selection_dialog(
+        &self,
+        response: dandanapi::SearchEpisodesResponse,
+        time_milis: f64,
+    ) {
+        let animes = match response.animes {
+            Some(a) => a,
+            None => {
+                self.toast(gettext("No results found"));
+                return;
+            }
+        };
+
+        let total_episodes: usize = animes.iter().map(|a| a.episodes.len()).sum();
+        if total_episodes == 0 {
+            self.toast(gettext("No episodes found"));
+            return;
+        }
+        if animes.len() == 1 && animes[0].episodes.len() == 1 {
+            let episode_id = animes[0].episodes[0].episode_id;
+            let obj = self.clone();
+            spawn(glib::clone!(
+                #[weak(rename_to = obj)]
+                obj,
+                async move {
+                    match obj.request_danmaku(episode_id).await {
+                        Ok(danmaku) => {
+                            obj.imp().danmaku_page.set_description(&format!(
+                                "{} {}",
+                                danmaku.len(),
+                                gettext("Danmaku Loaded")
+                            ));
+                            obj.imp().init_danmaku(danmaku, time_milis);
+                        }
+                        Err(e) => {
+                            tracing::error!("Danmaku load error: {e}");
+                            obj.toast(gettext("Failed to load danmaku"));
+                        }
+                    }
+                }
+            ));
+            return;
+        }
+
+        let dialog = adw::Dialog::new();
+        dialog.set_title(&gettext("Select Danmaku Source"));
+        dialog.set_content_width(480);
+        dialog.set_content_height(600);
+
+        let toolbar_view = adw::ToolbarView::new();
+        let header = adw::HeaderBar::new();
+        header.set_show_end_title_buttons(false);
+        header.set_show_start_title_buttons(false);
+        toolbar_view.add_top_bar(&header);
+
+        let scrolled = gtk::ScrolledWindow::new();
+        scrolled.set_policy(gtk::PolicyType::Never, gtk::PolicyType::Automatic);
+
+        let preferences_page = adw::PreferencesPage::new();
+        let group = adw::PreferencesGroup::new();
+
+        let single_season = animes.len() == 1;
+        let selected_episode_id: Rc<Cell<Option<i64>>> = Rc::new(Cell::new(None));
+        let selected_rows: Rc<RefCell<Vec<adw::ActionRow>>> = Rc::new(RefCell::new(Vec::new()));
+
+        for anime in &animes {
+            let expander = adw::ExpanderRow::new();
+            if single_season {
+                expander.set_expanded(true);
+            }
+            expander.set_title(&anime.anime_title);
+            let type_desc = anime.type_description.as_deref().unwrap_or("");
+            let count = anime.episodes.len();
+            expander.set_subtitle(&format!(
+                "{} · {} {}",
+                if type_desc.is_empty() { "Season" } else { type_desc },
+                count,
+                if count > 1 { "episodes" } else { "episode" }
+            ));
+
+            for ep in &anime.episodes {
+                let ep_row = adw::ActionRow::new();
+                ep_row.set_title(
+                    &ep.episode_title
+                        .clone()
+                        .unwrap_or_else(|| format!("Episode {}", ep.episode_id)),
+                );
+                ep_row.set_activatable(true);
+
+                let episode_id = ep.episode_id;
+                let selected_clone = selected_episode_id.clone();
+                let all_rows = selected_rows.clone();
+
+                ep_row.connect_activated(move |row| {
+                    selected_clone.set(Some(episode_id));
+                    for r in all_rows.borrow().iter() {
+                        r.remove_css_class("danmaku-episode-selected");
+                    }
+                    row.add_css_class("danmaku-episode-selected");
+                });
+
+                selected_rows.borrow_mut().push(ep_row.clone());
+                expander.add_row(&ep_row);
+            }
+
+            group.add(&expander);
+        }
+
+        preferences_page.add(&group);
+        scrolled.set_child(Some(&preferences_page));
+        toolbar_view.set_content(Some(&scrolled));
+
+        let load_btn = gtk::Button::builder()
+            .label(&gettext("Load Danmaku"))
+            .css_classes(["suggested-action"])
+            .halign(gtk::Align::Center)
+            .margin_top(6)
+            .margin_bottom(6)
+            .build();
+
+        let btn_box = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+        btn_box.set_halign(gtk::Align::Center);
+        btn_box.append(&load_btn);
+        toolbar_view.add_bottom_bar(&btn_box);
+        dialog.set_child(Some(&toolbar_view));
+
+        let css_provider = gtk::CssProvider::new();
+        css_provider.load_from_string(
+            ".danmaku-episode-selected { background-color: alpha(@accent_bg_color, 0.15); }"
+        );
+        gtk::style_context_add_provider_for_display(
+            &gtk::gdk::Display::default().unwrap(),
+            &css_provider,
+            gtk::STYLE_PROVIDER_PRIORITY_APPLICATION,
+        );
+
+        let obj = self.clone();
+        load_btn.connect_clicked(glib::clone!(
+            #[weak(rename_to = obj)]
+            obj,
+            #[weak]
+            dialog,
+            move |_| {
+                if let Some(episode_id) = selected_episode_id.get() {
+                    dialog.close();
+                    spawn(glib::clone!(
+                        #[weak(rename_to = obj)]
+                        obj,
+                        async move {
+                            match obj.request_danmaku(episode_id).await {
+                                Ok(danmaku) => {
+                                    obj.imp().danmaku_page.set_description(&format!(
+                                        "{} {}",
+                                        danmaku.len(),
+                                        gettext("Danmaku Loaded")
+                                    ));
+                                    obj.imp().init_danmaku(danmaku, time_milis);
+                                }
+                                Err(e) => {
+                                    tracing::error!("Danmaku load error: {e}");
+                                    obj.toast(gettext("Failed to load danmaku"));
+                                }
+                            }
+                        }
+                    ));
+                }
+            }
+        ));
+
+        if let Some(window) = self.root().and_downcast::<gtk::Window>() {
+            dialog.present(Some(&window));
         }
     }
 

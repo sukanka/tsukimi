@@ -485,6 +485,44 @@ msgstr "去色带设置已清除。"
 msgid "Failed to get GLContext"
 msgstr "获取 GLContext 失败"
 
+#: src/ui/mpv/page.rs:614 src/ui/mpv/page.rs:1534 src/ui/mpv/page.rs:1792
+msgid ""
+"Danmaku credential is invalid. Set App ID and App Secret to continue."
+msgstr "弹幕凭据无效，请设置 App ID 和 App Secret 后继续。"
+
+#: src/ui/mpv/page.rs:1659 src/ui/mpv/page.rs:1867 src/ui/mpv/page.rs:1991
+msgid "Danmaku Loaded"
+msgstr "弹幕已加载"
+
+#: src/ui/mpv/page.rs:1667 src/ui/mpv/page.rs:1676 src/ui/mpv/page.rs:1686
+#: src/ui/mpv/page.rs:1831 src/ui/mpv/page.rs:1832
+msgid "No Danmaku Loaded"
+msgstr "无弹幕加载"
+
+#: src/ui/mpv/page.rs:1798
+msgid "No video is currently playing"
+msgstr "没有正在播放的视频"
+
+#: src/ui/mpv/page.rs:1845
+msgid "No results found"
+msgstr "未找到结果"
+
+#: src/ui/mpv/page.rs:1852
+msgid "No episodes found"
+msgstr "未找到剧集"
+
+#: src/ui/mpv/page.rs:1873 src/ui/mpv/page.rs:1997
+msgid "Failed to load danmaku"
+msgstr "加载弹幕失败"
+
+#: src/ui/mpv/page.rs:1882
+msgid "Select Danmaku Source"
+msgstr "选择弹幕来源"
+
+#: src/ui/mpv/page.rs:1950
+msgid "Load Danmaku"
+msgstr "加载弹幕"
+
 #: src/ui/mpv/page.rs:308 src/ui/mpv/page.rs:310 resources/ui/mpvpage.ui:215
 msgid "Pause"
 msgstr "暂停"
