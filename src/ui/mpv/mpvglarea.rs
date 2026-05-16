@@ -13,10 +13,12 @@ use super::tsukimi_mpv::{
 };
 use crate::{
     client::jellyfin_client::JELLYFIN_CLIENT,
+    ui::models::SETTINGS,
     utils::spawn,
 };
 
 mod imp {
+    use std::cell::RefCell;
     use std::ffi::c_void;
 
     #[cfg(target_os = "linux")]
@@ -58,6 +60,7 @@ mod imp {
     #[derive(Default)]
     pub struct MPVGLArea {
         pub mpv: TsukimiMPV,
+        pub ipc_client: RefCell<Option<crate::ui::mpv::mpv_ipc::MpvIpcClient>>,
 
         pub ctx: OnceCell<glow::Context>,
     }
@@ -82,6 +85,9 @@ mod imp {
     impl WidgetImpl for MPVGLArea {
         fn realize(&self) {
             self.parent_realize();
+            if self.obj().is_gpu_next() {
+                return;
+            }
             let obj = self.obj();
 
             if obj.error().is_some() {
@@ -115,6 +121,9 @@ mod imp {
 
     impl GLAreaImpl for MPVGLArea {
         fn render(&self, _context: &GLContext) -> glib::Propagation {
+            if self.obj().is_gpu_next() {
+                return glib::Propagation::Stop;
+            }
             let binding = self.mpv().ctx.borrow();
             let Some(ctx) = binding.as_ref() else {
                 return glib::Propagation::Stop;
@@ -207,7 +216,39 @@ impl MPVGLArea {
         Object::builder().build()
     }
 
+    pub fn is_gpu_next(&self) -> bool {
+        SETTINGS.mpv_video_output() == 1
+    }
+
+    fn ipc(&self) -> Option<std::cell::Ref<'_, super::mpv_ipc::MpvIpcClient>> {
+        if !self.is_gpu_next() {
+            return None;
+        }
+        let r = self.imp().ipc_client.borrow();
+        if r.is_some() {
+            Some(std::cell::Ref::map(r, |r| r.as_ref().unwrap()))
+        } else {
+            None
+        }
+    }
+
     pub fn play(&self, url: &str, percentage: f64) {
+        if self.is_gpu_next() {
+            let url = url.to_owned();
+            spawn(glib::clone!(
+                #[weak(rename_to = obj)]
+                self,
+                async move {
+                    let url = JELLYFIN_CLIENT.get_streaming_url(&url).await;
+                    info!("Now Playing (gpu-next IPC): {}", url);
+                    let mut guard = obj.imp().ipc_client.borrow_mut();
+                    let client = guard
+                        .get_or_insert_with(super::mpv_ipc::MpvIpcClient::new);
+                    client.play(&url, percentage);
+                }
+            ));
+            return;
+        }
         let url = url.to_owned();
 
         spawn(glib::clone!(
@@ -232,71 +273,129 @@ impl MPVGLArea {
         ));
     }
 
+    pub fn stop(&self) {
+        if let Some(client) = self.ipc() {
+            return client.command("stop", &[]);
+        }
+        self.imp().mpv().stop();
+    }
+
     pub fn add_sub(&self, url: &str) {
+        if let Some(client) = self.ipc() {
+            return client.command("sub-add", &[url, "select"]);
+        }
         self.imp().mpv().add_sub(url)
     }
 
     pub fn seek_forward(&self, value: i64) {
+        if let Some(client) = self.ipc() {
+            return client.command("seek", &[&value.to_string()]);
+        }
         self.imp().mpv().seek_forward(value)
     }
 
     pub fn seek_backward(&self, value: i64) {
+        if let Some(client) = self.ipc() {
+            return client.command("seek", &[&(-value).to_string()]);
+        }
         self.imp().mpv().seek_backward(value)
     }
 
     pub fn set_position(&self, value: f64) {
+        if let Some(client) = self.ipc() {
+            return client.set_property_f64("time-pos", value);
+        }
         self.imp().mpv().set_position(value)
     }
 
     pub fn position(&self) -> f64 {
+        if let Some(client) = self.ipc() {
+            return client.position();
+        }
         self.imp().mpv().position()
     }
 
     pub fn set_aid(&self, value: TrackSelection) {
+        if let Some(client) = self.ipc() {
+            return client.set_property_string("aid", &value.to_string());
+        }
         self.imp().mpv().set_aid(value)
     }
 
     pub fn get_track_id(&self, type_: &str) -> i64 {
+        if let Some(client) = self.ipc() {
+            return client.get_track_id(type_);
+        }
         self.imp().mpv().get_track_id(type_)
     }
 
     pub fn set_sid(&self, value: TrackSelection) {
+        if let Some(client) = self.ipc() {
+            return client.set_property_string("sid", &value.to_string());
+        }
         self.imp().mpv().set_sid(value)
     }
 
     pub fn press_key(&self, key: u32, state: gtk::gdk::ModifierType) {
+        if self.is_gpu_next() {
+            return; // keyboard handled by mpv window itself
+        }
         self.imp().mpv().press_key(key, state)
     }
 
     pub fn release_key(&self, key: u32, state: gtk::gdk::ModifierType) {
+        if self.is_gpu_next() {
+            return; // keyboard handled by mpv window itself
+        }
         self.imp().mpv().release_key(key, state)
     }
 
     pub fn set_speed(&self, value: f64) {
+        if let Some(client) = self.ipc() {
+            return client.set_property_f64("speed", value);
+        }
         self.imp().mpv().set_speed(value)
     }
 
     pub fn set_volume(&self, value: i64) {
+        if let Some(client) = self.ipc() {
+            return client.set_property_i64("volume", value);
+        }
         self.imp().mpv().set_volume(value)
     }
 
     pub fn display_stats_toggle(&self) {
+        if let Some(client) = self.ipc() {
+            return client.command("script-binding", &["stats/display-stats-toggle"]);
+        }
         self.imp().mpv().display_stats_toggle()
     }
 
     pub fn paused(&self) -> bool {
+        if self.is_gpu_next() {
+            return true; // pause state tracked via ListenEvent::Pause
+        }
         self.imp().mpv().paused()
     }
 
     pub fn pause(&self) {
+        if let Some(client) = self.ipc() {
+            return client.command("cycle", &["pause"]);
+        }
         self.imp().mpv().command_pause();
     }
 
     pub fn volume_scroll(&self, value: i64) {
+        if let Some(client) = self.ipc() {
+            return client.command("add", &["volume", &value.to_string()]);
+        }
         self.imp().mpv().volume_scroll(value)
     }
 
     pub fn set_slang(&self, value: String) {
+        if let Some(client) = self.ipc() {
+            return client.set_property_string("slang", &value);
+        }
         self.imp().mpv().set_slang(value)
     }
 
@@ -304,6 +403,15 @@ impl MPVGLArea {
     where
         V: SetData + Send + 'static,
     {
+        if self.is_gpu_next() {
+            return;
+        }
         self.imp().mpv().set_property(property, value)
+    }
+
+    pub fn stop_ipc(&self) {
+        if let Some(client) = self.imp().ipc_client.borrow_mut().take() {
+            client.stop();
+        }
     }
 }

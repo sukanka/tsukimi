@@ -684,7 +684,7 @@ impl MPVPage {
             .map(|t| format!("{title1} - {t}"))
             .unwrap_or_else(|| title1);
 
-        self.mpv().set_property("force-media-title", media_title);
+        self.imp().video.set_property("force-media-title", media_title);
 
         let id = item.id();
         self.imp().video_scale.reset_scale();
@@ -1045,10 +1045,37 @@ impl MPVPage {
     }
 
     fn on_shutdown(&self) {
-        close_on_error!(
-            self,
-            gettext("MPV has been shutdown, Application will exit.\nTsukimi can't restart MPV.",)
-        );
+        if self.imp().video.is_gpu_next() {
+            // gpu-next: mpv window closed, report position before cleanup, return to main
+            self.handle_callback(BackType::Stop);
+            self.imp().video.stop_ipc();
+            self.imp().danmaku_list.replace(None);
+            self.set_current_video(None::<TuItem>);
+            self.set_key_vaild(false);
+            let root = self.root();
+            if let Some(window) =
+                root.and_downcast_ref::<crate::ui::widgets::window::Window>()
+            {
+                window.imp().stack.set_visible_child_name("main");
+                window.allow_suspend();
+
+                spawn_g_timeout(glib::clone!(
+                    #[weak]
+                    window,
+                    async move {
+                        window.update_item_page().await;
+                    }
+                ));
+            }
+            self.set_reveal_overlay(true);
+        } else {
+            close_on_error!(
+                self,
+                gettext(
+                    "MPV has been shutdown, Application will exit.\nTsukimi can't restart MPV.",
+                )
+            );
+        }
     }
 
     fn on_cache_time_update(&self, value: i64) {
@@ -1331,11 +1358,16 @@ impl MPVPage {
         self.remove_timeout();
         self.imp().pause_danmaku();
 
-        let mpv = self.mpv();
-        mpv.pause(true);
-        mpv.stop();
-        mpv.event_thread_alive
-            .store(PAUSED, std::sync::atomic::Ordering::SeqCst);
+        if self.imp().video.is_gpu_next() {
+            self.imp().video.stop_ipc();
+        } else {
+            let mpv = self.mpv();
+            mpv.pause(true);
+            mpv.stop();
+            mpv.event_thread_alive
+                .store(PAUSED, std::sync::atomic::Ordering::SeqCst);
+        }
+
         let root = self.root();
         let window = root
             .and_downcast_ref::<crate::ui::widgets::window::Window>()
