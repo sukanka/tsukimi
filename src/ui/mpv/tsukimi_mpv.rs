@@ -24,7 +24,7 @@ use tracing::{
     warn,
 };
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct MpvTrack {
     pub id: i64,
     pub title: String,
@@ -501,6 +501,7 @@ impl TsukimiMPV {
 unsafe impl Send for TsukimiMPV {}
 unsafe impl Sync for TsukimiMPV {}
 
+#[derive(Clone)]
 pub struct MpvTracks {
     pub audio_tracks: Vec<MpvTrack>,
     pub sub_tracks: Vec<MpvTrack>,
