@@ -65,6 +65,9 @@ jobs:
           chown -R builder:builder /tmp/pkgbuild
           su -m builder -c "cd /tmp/pkgbuild && makepkg --noconfirm --syncdeps --cleanbuild --clean --holdver"
           cp /tmp/pkgbuild/tsukimi-git-*.pkg.tar.zst "$GITHUB_WORKSPACE"/
+          for f in "$GITHUB_WORKSPACE"/*.pkg.tar.zst; do
+            mv "$f" "$(echo "$f" | sed 's/:/_/g')"
+          done
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
