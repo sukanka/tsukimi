@@ -4,7 +4,8 @@ on:
   workflow_dispatch:
   push:
     branches:
-      - "*"
+      - "master"
+      - "main"
     paths-ignore:
       - "docs/**"
       - "**/.gitignore"
@@ -15,6 +16,7 @@ on:
       - "*"
   pull_request:
     branches:
+      - "master"
       - "main"
     paths-ignore:
       - "docs/**"
