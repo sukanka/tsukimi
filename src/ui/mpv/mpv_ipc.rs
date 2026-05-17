@@ -1,3 +1,38 @@
+// IPC backend: spawns mpv as a subprocess and talks to it over a Unix
+// domain socket. The whole thing is unix-only (UnixStream, prctl); on
+// Windows we expose a non-functional stub so mpvglarea.rs compiles
+// without #[cfg]-fork at every call site, and is_ipc() in MPVGLArea
+// guarantees the stub paths are never taken at runtime.
+
+#[cfg(not(unix))]
+mod stub {
+    #[derive(Default)]
+    pub struct MpvIpcClient;
+
+    impl MpvIpcClient {
+        pub fn new() -> Self {
+            Self
+        }
+        pub fn play(&self, _url: &str, _percentage: f64, _vo: &str) {}
+        pub fn stop(&self) {}
+        pub fn command(&self, _cmd: &str, _args: &[&str]) {}
+        pub fn set_property_string(&self, _name: &str, _value: &str) {}
+        pub fn set_property_f64(&self, _name: &str, _value: f64) {}
+        pub fn set_property_i64(&self, _name: &str, _value: i64) {}
+        pub fn position(&self) -> f64 {
+            0.0
+        }
+        pub fn get_track_id(&self, _type_: &str) -> i64 {
+            0
+        }
+        pub fn clear_danmaku_overlay(&self) {}
+    }
+}
+
+#[cfg(not(unix))]
+pub use stub::MpvIpcClient;
+
+#[cfg(unix)]
 use std::{
     cell::RefCell,
     io::{BufRead, BufReader, Write},
@@ -9,11 +44,14 @@ use std::{
     time::{Duration, Instant},
 };
 
+#[cfg(unix)]
 use serde_json::Value;
+#[cfg(unix)]
 use super::tsukimi_mpv::{
     Chapter, ChapterList, ListenEvent, MPV_EVENT_CHANNEL, MpvTrack, MpvTracks,
 };
 
+#[cfg(unix)]
 pub struct MpvIpcClient {
     child: RefCell<Option<Child>>,
     socket_path: String,
@@ -39,6 +77,7 @@ pub struct MpvIpcClient {
     pub last_tracks: Arc<Mutex<Option<MpvTracks>>>,
 }
 
+#[cfg(unix)]
 impl MpvIpcClient {
     pub fn new() -> Self {
         let socket_path = format!("/tmp/tsukimi-mpv-{}.sock", std::process::id());
@@ -521,6 +560,7 @@ impl MpvIpcClient {
     }
 }
 
+#[cfg(unix)]
 impl Drop for MpvIpcClient {
     fn drop(&mut self) {
         self.overlay_alive.store(false, Ordering::SeqCst);
@@ -539,6 +579,7 @@ impl Drop for MpvIpcClient {
     }
 }
 
+#[cfg(unix)]
 fn parse_track_list(data: &Value) -> MpvTracks {
     let mut audio_tracks = Vec::new();
     let mut sub_tracks = Vec::new();
@@ -576,6 +617,7 @@ fn parse_track_list(data: &Value) -> MpvTracks {
     MpvTracks { audio_tracks, sub_tracks }
 }
 
+#[cfg(unix)]
 fn parse_chapter_list(data: &Value) -> ChapterList {
     let mut chapters = Vec::new();
     if let Some(arr) = data.as_array() {

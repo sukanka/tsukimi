@@ -217,9 +217,20 @@ impl MPVGLArea {
     }
 
     pub fn is_ipc(&self) -> bool {
-        !super::page::is_libmpv()
+        // IPC mode requires a Unix domain socket; on Windows the IPC
+        // backend is unavailable and we always fall back to the
+        // in-process libmpv path.
+        #[cfg(unix)]
+        {
+            !super::page::is_libmpv()
+        }
+        #[cfg(not(unix))]
+        {
+            false
+        }
     }
 
+    #[cfg(unix)]
     fn ipc(&self) -> Option<std::cell::Ref<'_, super::mpv_ipc::MpvIpcClient>> {
         if !self.is_ipc() {
             return None;
@@ -230,6 +241,11 @@ impl MPVGLArea {
         } else {
             None
         }
+    }
+
+    #[cfg(not(unix))]
+    fn ipc(&self) -> Option<std::cell::Ref<'_, super::mpv_ipc::MpvIpcClient>> {
+        None
     }
 
     pub fn play(&self, url: &str, percentage: f64) {
