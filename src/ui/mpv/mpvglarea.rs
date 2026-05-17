@@ -217,8 +217,7 @@ impl MPVGLArea {
     }
 
     pub fn is_ipc(&self) -> bool {
-        let m = SETTINGS.mpv_video_output();
-        m == 1 || m == 2
+        !super::page::is_libmpv()
     }
 
     fn ipc(&self) -> Option<std::cell::Ref<'_, super::mpv_ipc::MpvIpcClient>> {
@@ -417,6 +416,12 @@ impl MPVGLArea {
     pub fn stop_ipc(&self) {
         if let Some(client) = self.imp().ipc_client.borrow_mut().take() {
             client.stop();
+        }
+    }
+
+    pub fn clear_danmaku_overlay(&self) {
+        if let Some(client) = self.ipc() {
+            client.clear_danmaku_overlay();
         }
     }
 }

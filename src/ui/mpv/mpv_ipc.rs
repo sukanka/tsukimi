@@ -4,9 +4,9 @@ use std::{
     os::unix::net::UnixStream,
     os::unix::process::CommandExt,
     process::{Child, Command},
-    sync::{Arc, Mutex},
+    sync::{Arc, Mutex, atomic::{AtomicBool, Ordering}},
     thread::JoinHandle,
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use serde_json::Value;
@@ -18,8 +18,23 @@ pub struct MpvIpcClient {
     child: RefCell<Option<Child>>,
     socket_path: String,
     event_handle: RefCell<Option<JoinHandle<()>>>,
+    overlay_handle: RefCell<Option<JoinHandle<()>>>,
+    overlay_alive: Arc<AtomicBool>,
+    /// Long-lived blocking command writer (with short timeouts) wrapped in
+    /// a BufReader so the overlay tick can read mpv's ack reply line by
+    /// line and pace its sending against mpv's actual processing speed.
+    /// This is what prevents queued backlogs from bursting out as scroll
+    /// jitter under main-thread spikes.
+    writer: Arc<Mutex<Option<BufReader<UnixStream>>>>,
     /// Cached latest playback position (seconds), for position() queries
     pub last_time_pos: Arc<Mutex<f64>>,
+    /// Wall-clock instant when last_time_pos was last refreshed; used by
+    /// the overlay tick thread to extrapolate time between updates.
+    pub last_instant: Arc<Mutex<Instant>>,
+    /// Cached pause state, observed via property-change.
+    pub paused: Arc<AtomicBool>,
+    /// Cached playback speed, observed via property-change.
+    pub speed: Arc<Mutex<f64>>,
     /// Cached latest track info, for get_track_id() queries
     pub last_tracks: Arc<Mutex<Option<MpvTracks>>>,
 }
@@ -33,7 +48,13 @@ impl MpvIpcClient {
             child: RefCell::new(None),
             socket_path,
             event_handle: RefCell::new(None),
+            overlay_handle: RefCell::new(None),
+            overlay_alive: Arc::new(AtomicBool::new(false)),
+            writer: Arc::new(Mutex::new(None)),
             last_time_pos: Arc::new(Mutex::new(0.0)),
+            last_instant: Arc::new(Mutex::new(Instant::now())),
+            paused: Arc::new(AtomicBool::new(false)),
+            speed: Arc::new(Mutex::new(1.0)),
             last_tracks: Arc::new(Mutex::new(None)),
         }
     }
@@ -90,6 +111,10 @@ impl MpvIpcClient {
         let socket_path = self.socket_path.clone();
         let last_time_pos = Arc::clone(&self.last_time_pos);
         let last_tracks = Arc::clone(&self.last_tracks);
+        let last_instant = Arc::clone(&self.last_instant);
+        let paused = Arc::clone(&self.paused);
+        let speed = Arc::clone(&self.speed);
+        let overlay_alive_event = Arc::clone(&self.overlay_alive);
         let event_handle = std::thread::Builder::new()
             .name("mpv-ipc-event".into())
             .spawn(move || {
@@ -117,6 +142,7 @@ impl MpvIpcClient {
                     "demuxer-cache-time",
                     "volume",
                     "chapter-list",
+                    "speed",
                 ];
                 {
                     let mut s = stream.try_clone().unwrap();
@@ -141,6 +167,9 @@ impl MpvIpcClient {
                     {
                         match event_name {
                             "shutdown" => {
+                                // Stop overlay tick before mpv tears the socket
+                                // down so it can't block on a dying writer.
+                                overlay_alive_event.store(false, Ordering::SeqCst);
                                 let _ = MPV_EVENT_CHANNEL.tx.send(ListenEvent::Shutdown);
                                 shutdown_sent = true;
                                 break;
@@ -183,6 +212,7 @@ impl MpvIpcClient {
                                             let is_zero = *last_time_pos.lock().unwrap() == 0.0;
                                             if t > 0.0 || is_zero {
                                                 *last_time_pos.lock().unwrap() = t;
+                                                *last_instant.lock().unwrap() = Instant::now();
                                             }
                                             let _ = MPV_EVENT_CHANNEL.tx.send(
                                                 ListenEvent::TimePos(t),
@@ -191,6 +221,12 @@ impl MpvIpcClient {
                                     }
                                     "pause" => {
                                         if let Some(p) = data.as_bool() {
+                                            paused.store(p, Ordering::SeqCst);
+                                            // When unpausing, refresh the wall-clock anchor so
+                                            // overlay extrapolation doesn't jump.
+                                            if !p {
+                                                *last_instant.lock().unwrap() = Instant::now();
+                                            }
                                             let _ = MPV_EVENT_CHANNEL
                                                 .tx
                                                 .send(ListenEvent::Pause(p));
@@ -244,6 +280,14 @@ impl MpvIpcClient {
                                             ListenEvent::ChapterList(chapters),
                                         );
                                     }
+                                    "speed" => {
+                                        if let Some(s) = data.as_f64() {
+                                            *speed.lock().unwrap() = s;
+                                            let _ = MPV_EVENT_CHANNEL
+                                                .tx
+                                                .send(ListenEvent::Speed(s));
+                                        }
+                                    }
                                     _ => {}
                                 }
                             }
@@ -252,7 +296,9 @@ impl MpvIpcClient {
                     }
                 }
 
-                // Event loop ended = mpv exited
+                // Event loop ended = mpv exited. Make sure the overlay tick
+                // can't keep poking a dead socket.
+                overlay_alive_event.store(false, Ordering::SeqCst);
                 if !shutdown_sent {
                     let _ = MPV_EVENT_CHANNEL.tx.send(ListenEvent::Shutdown);
                 }
@@ -260,10 +306,129 @@ impl MpvIpcClient {
             .expect("Failed to spawn mpv IPC event thread");
 
         self.event_handle.replace(Some(event_handle));
+
+        // ~60Hz overlay tick with reply pacing: send command, wait for
+        // mpv's ack, then sleep up to a frame period before sending the
+        // next. mpv-side load determines the natural cadence — when
+        // it's busy (key event, menu redraw, heavy frame) the next
+        // tick is delayed to match, so commands never queue up and we
+        // never see a backlog burst out as scroll jitter.
+        self.overlay_alive.store(true, Ordering::SeqCst);
+        let alive = Arc::clone(&self.overlay_alive);
+        let last_time_pos = Arc::clone(&self.last_time_pos);
+        let last_instant = Arc::clone(&self.last_instant);
+        let paused = Arc::clone(&self.paused);
+        let speed = Arc::clone(&self.speed);
+        let writer_slot = Arc::clone(&self.writer);
+        let socket_path = self.socket_path.clone();
+        let overlay_handle = std::thread::Builder::new()
+            .name("mpv-ipc-overlay".into())
+            .spawn(move || {
+                let frame = Duration::from_millis(16);
+                let mut request_id: u64 = 1;
+                let mut last_sent = Instant::now() - frame;
+                while alive.load(Ordering::SeqCst) {
+                    // Sleep up to one frame, but no longer — if mpv was
+                    // slow this iteration, we already paid that wait.
+                    let now = Instant::now();
+                    let sleep_for = frame.saturating_sub(now.duration_since(last_sent));
+                    if !sleep_for.is_zero() {
+                        std::thread::sleep(sleep_for);
+                    }
+                    if !alive.load(Ordering::SeqCst) {
+                        break;
+                    }
+
+                    let state_guard =
+                        super::danmaku_ass::OVERLAY_STATE.read().unwrap();
+                    let Some((events, config)) = state_guard.as_ref() else {
+                        last_sent = Instant::now();
+                        continue;
+                    };
+                    if paused.load(Ordering::SeqCst) {
+                        last_sent = Instant::now();
+                        continue;
+                    }
+                    let base_time = *last_time_pos.lock().unwrap();
+                    let elapsed = last_instant.lock().unwrap().elapsed().as_secs_f64();
+                    let cur_speed = *speed.lock().unwrap();
+                    let t = base_time + elapsed * cur_speed;
+                    let data = super::danmaku_ass::render_overlay_data(
+                        t * 1000.0,
+                        events,
+                        config,
+                    );
+                    drop(state_guard);
+
+                    request_id = request_id.wrapping_add(1);
+                    let payload = serde_json::json!({
+                        "command": ["osd-overlay", 0, "ass-events", data, 1920, 1080],
+                        "request_id": request_id,
+                    });
+                    let Ok(json) = serde_json::to_string(&payload) else {
+                        last_sent = Instant::now();
+                        continue;
+                    };
+
+                    let mut guard = writer_slot.lock().unwrap();
+                    if guard.is_none() && alive.load(Ordering::SeqCst)
+                        && let Ok(s) = UnixStream::connect(&socket_path)
+                    {
+                        // Blocking with short timeouts: writes block briefly
+                        // on backpressure (preferred over WouldBlock since
+                        // we want the tick paced by mpv), reads block until
+                        // ack arrives or 100ms timeout.
+                        let _ = s.set_write_timeout(Some(Duration::from_millis(100)));
+                        let _ = s.set_read_timeout(Some(Duration::from_millis(100)));
+                        *guard = Some(BufReader::new(s));
+                    }
+                    let Some(reader) = guard.as_mut() else {
+                        last_sent = Instant::now();
+                        continue;
+                    };
+
+                    if writeln!(reader.get_mut(), "{json}").is_err() {
+                        *guard = None;
+                        last_sent = Instant::now();
+                        continue;
+                    }
+
+                    // Wait for matching ack. mpv may push events
+                    // (property-change etc.) on this socket too, so
+                    // skip lines without the matching request_id.
+                    // Capped at ~3 lines so we don't starve other ticks.
+                    for _ in 0..3 {
+                        let mut line = String::new();
+                        match reader.read_line(&mut line) {
+                            Ok(0) | Err(_) => {
+                                *guard = None;
+                                break;
+                            }
+                            Ok(_) => {
+                                let matched = serde_json::from_str::<Value>(&line)
+                                    .ok()
+                                    .and_then(|v| v.get("request_id")?.as_u64())
+                                    == Some(request_id);
+                                if matched {
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                    last_sent = Instant::now();
+                }
+            })
+            .expect("Failed to spawn mpv IPC overlay thread");
+
+        self.overlay_handle.replace(Some(overlay_handle));
     }
 
     /// Kill mpv subprocess, clean up socket
     pub fn stop(&self) {
+        self.overlay_alive.store(false, Ordering::SeqCst);
+        if let Some(handle) = self.overlay_handle.borrow_mut().take() {
+            let _ = handle.join();
+        }
         if let Some(mut child) = self.child.borrow_mut().take() {
             let _ = child.kill();
             let _ = child.wait();
@@ -271,10 +436,20 @@ impl MpvIpcClient {
         if let Some(handle) = self.event_handle.borrow_mut().take() {
             let _ = handle.join();
         }
+        *self.writer.lock().unwrap() = None;
         let _ = std::fs::remove_file(&self.socket_path);
     }
 
-    /// Send a raw JSON IPC message via socket
+    /// Remove the danmaku overlay (mpv osd-overlay slot 0).
+    pub fn clear_danmaku_overlay(&self) {
+        // mpv's osd-overlay format must be "none" or "ass-events";
+        // empty data + format=none clears the slot.
+        self.command("osd-overlay", &["0", "none", ""]);
+    }
+
+    /// Send a raw JSON IPC message via socket. One-shot connect: closing
+    /// the socket makes mpv discard the unread reply, so we can't build
+    /// up a backlog that would eventually stall mpv's input thread.
     fn send_raw(&self, msg: &str) {
         if let Ok(mut stream) = UnixStream::connect(&self.socket_path) {
             let _ = writeln!(stream, "{msg}");
@@ -348,6 +523,10 @@ impl MpvIpcClient {
 
 impl Drop for MpvIpcClient {
     fn drop(&mut self) {
+        self.overlay_alive.store(false, Ordering::SeqCst);
+        if let Some(handle) = self.overlay_handle.borrow_mut().take() {
+            let _ = handle.join();
+        }
         if let Some(mut child) = self.child.borrow_mut().take() {
             let _ = child.kill();
             let _ = child.wait();
@@ -355,6 +534,7 @@ impl Drop for MpvIpcClient {
         if let Some(handle) = self.event_handle.borrow_mut().take() {
             let _ = handle.join();
         }
+        *self.writer.lock().unwrap() = None;
         let _ = std::fs::remove_file(&self.socket_path);
     }
 }
