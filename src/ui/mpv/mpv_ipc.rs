@@ -2,6 +2,7 @@ use std::{
     cell::RefCell,
     io::{BufRead, BufReader, Write},
     os::unix::net::UnixStream,
+    os::unix::process::CommandExt,
     process::{Child, Command},
     sync::{Arc, Mutex},
     thread::JoinHandle,
@@ -38,14 +39,14 @@ impl MpvIpcClient {
     }
 
     /// Spawn mpv subprocess, connect IPC socket, start event listener
-    pub fn play(&self, url: &str, percentage: f64) {
+    pub fn play(&self, url: &str, percentage: f64, vo: &str) {
         self.stop();
 
         let _ = std::fs::remove_file(&self.socket_path);
 
         let mut cmd = Command::new("mpv");
         cmd.arg(format!("--input-ipc-server={}", self.socket_path))
-            .arg("--vo=gpu-next")
+            .arg(format!("--vo={}", vo))
             .arg("--keep-open=always")
             .arg("--input-vo-keyboard=yes")
             .arg("--input-default-bindings=yes")
@@ -68,6 +69,20 @@ impl MpvIpcClient {
         }
 
         cmd.arg(url);
+
+        // Linux: have mpv receive SIGTERM if tsukimi dies, so closing the
+        // app (or a crash) doesn't leave the mpv window playing on.
+        #[cfg(target_os = "linux")]
+        unsafe {
+            cmd.pre_exec(|| {
+                // SIGTERM = 15
+                let r = libc::prctl(libc::PR_SET_PDEATHSIG, 15);
+                if r != 0 {
+                    return Err(std::io::Error::last_os_error());
+                }
+                Ok(())
+            });
+        }
 
         let child = cmd.spawn().expect("Failed to spawn mpv");
         self.child.replace(Some(child));
@@ -170,7 +185,7 @@ impl MpvIpcClient {
                                                 *last_time_pos.lock().unwrap() = t;
                                             }
                                             let _ = MPV_EVENT_CHANNEL.tx.send(
-                                                ListenEvent::TimePos(t as i64),
+                                                ListenEvent::TimePos(t),
                                             );
                                         }
                                     }

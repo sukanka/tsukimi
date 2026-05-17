@@ -1045,13 +1045,12 @@ impl MPVPage {
     }
 
     fn on_shutdown(&self) {
-        if self.imp().video.is_gpu_next() {
-            // gpu-next: mpv window closed, report position before cleanup, return to main
+        if self.imp().video.is_ipc() {
+            // IPC: mpv window closed, report position before cleanup, return to main
             self.handle_callback(BackType::Stop);
             self.imp().video.stop_ipc();
             self.imp().danmaku_list.replace(None);
             self.set_current_video(None::<TuItem>);
-            self.set_key_vaild(false);
             let root = self.root();
             if let Some(window) =
                 root.and_downcast_ref::<crate::ui::widgets::window::Window>()
@@ -1103,8 +1102,8 @@ impl MPVPage {
         self.imp().volume_bar.set_level(value as f64 / 100.0);
     }
 
-    fn scale_cb(&self, value: i64) {
-        self.imp().video_scale.set_value(value as f64);
+    fn scale_cb(&self, value: f64) {
+        self.imp().video_scale.set_value(value);
     }
 
     #[template_callback]
@@ -1358,7 +1357,7 @@ impl MPVPage {
         self.remove_timeout();
         self.imp().pause_danmaku();
 
-        if self.imp().video.is_gpu_next() {
+        if self.imp().video.is_ipc() {
             self.imp().video.stop_ipc();
         } else {
             let mpv = self.mpv();

@@ -85,7 +85,7 @@ mod imp {
     impl WidgetImpl for MPVGLArea {
         fn realize(&self) {
             self.parent_realize();
-            if self.obj().is_gpu_next() {
+            if self.obj().is_ipc() {
                 return;
             }
             let obj = self.obj();
@@ -121,7 +121,7 @@ mod imp {
 
     impl GLAreaImpl for MPVGLArea {
         fn render(&self, _context: &GLContext) -> glib::Propagation {
-            if self.obj().is_gpu_next() {
+            if self.obj().is_ipc() {
                 return glib::Propagation::Stop;
             }
             let binding = self.mpv().ctx.borrow();
@@ -216,12 +216,13 @@ impl MPVGLArea {
         Object::builder().build()
     }
 
-    pub fn is_gpu_next(&self) -> bool {
-        SETTINGS.mpv_video_output() == 1
+    pub fn is_ipc(&self) -> bool {
+        let m = SETTINGS.mpv_video_output();
+        m == 1 || m == 2
     }
 
     fn ipc(&self) -> Option<std::cell::Ref<'_, super::mpv_ipc::MpvIpcClient>> {
-        if !self.is_gpu_next() {
+        if !self.is_ipc() {
             return None;
         }
         let r = self.imp().ipc_client.borrow();
@@ -233,18 +234,22 @@ impl MPVGLArea {
     }
 
     pub fn play(&self, url: &str, percentage: f64) {
-        if self.is_gpu_next() {
+        if self.is_ipc() {
             let url = url.to_owned();
+            let vo = match SETTINGS.mpv_video_output() {
+                2 => "dmabuf-wayland",
+                _ => "gpu-next",
+            };
             spawn(glib::clone!(
                 #[weak(rename_to = obj)]
                 self,
                 async move {
                     let url = JELLYFIN_CLIENT.get_streaming_url(&url).await;
-                    info!("Now Playing (gpu-next IPC): {}", url);
+                    info!("Now Playing (mpv IPC, vo={}): {}", vo, url);
                     let mut guard = obj.imp().ipc_client.borrow_mut();
                     let client = guard
                         .get_or_insert_with(super::mpv_ipc::MpvIpcClient::new);
-                    client.play(&url, percentage);
+                    client.play(&url, percentage, vo);
                 }
             ));
             return;
@@ -337,14 +342,14 @@ impl MPVGLArea {
     }
 
     pub fn press_key(&self, key: u32, state: gtk::gdk::ModifierType) {
-        if self.is_gpu_next() {
+        if self.is_ipc() {
             return; // keyboard handled by mpv window itself
         }
         self.imp().mpv().press_key(key, state)
     }
 
     pub fn release_key(&self, key: u32, state: gtk::gdk::ModifierType) {
-        if self.is_gpu_next() {
+        if self.is_ipc() {
             return; // keyboard handled by mpv window itself
         }
         self.imp().mpv().release_key(key, state)
@@ -372,7 +377,7 @@ impl MPVGLArea {
     }
 
     pub fn paused(&self) -> bool {
-        if self.is_gpu_next() {
+        if self.is_ipc() {
             return true; // pause state tracked via ListenEvent::Pause
         }
         self.imp().mpv().paused()
@@ -403,7 +408,7 @@ impl MPVGLArea {
     where
         V: SetData + Send + 'static,
     {
-        if self.is_gpu_next() {
+        if self.is_ipc() {
             return;
         }
         self.imp().mpv().set_property(property, value)
