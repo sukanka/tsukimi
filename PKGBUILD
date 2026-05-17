@@ -2,6 +2,7 @@ _pkgname="tsukimi"
 pkgname="${_pkgname}-git"
 pkgver=25.5.0.r1336.g232958
 pkgrel=1
+epoch=1
 pkgdesc='A simple third-party Emby client'
 arch=('x86_64')
 url="https://github.com/tsukinaha/tsukimi"
