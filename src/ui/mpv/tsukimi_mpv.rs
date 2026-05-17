@@ -99,15 +99,14 @@ impl Default for TsukimiMPV {
             init.set_property("user-agent", crate::USER_AGENT.as_str())?;
             init.set_property("video-timing-offset", 0)?;
             init.set_property("video-sync", "audio")?;
-            match SETTINGS.mpv_video_output() {
-                0 => {
-                    init.set_property("vo", "libmpv")?;
-                    init.set_property("osc", false)?;
-                    init.set_property("osd-level", 0)?;
-                }
-                1 => init.set_property("vo", "gpu-next")?,
-                2 => init.set_property("vo", "dmabuf-wayland")?,
-                _ => unreachable!(),
+            // mode 0 (libmpv) is the only path that runs an in-process mpv
+            // instance — modes 1/2 spawn a subprocess via IPC and don't use
+            // this Mpv handle for video output. Still set vo for mode 0; the
+            // unused libmpv2 instance for modes 1/2 keeps default vo.
+            if SETTINGS.mpv_video_output() == 0 {
+                init.set_property("vo", "libmpv")?;
+                init.set_property("osc", false)?;
+                init.set_property("osd-level", 0)?;
             }
             init.set_property(
                 "demuxer-max-bytes",
@@ -198,7 +197,7 @@ pub enum ListenEvent {
     Speed(f64),
     Shutdown,
     DemuxerCacheTime(i64),
-    TimePos(i64),
+    TimePos(f64),
     PausedForCache(bool),
     ChapterList(ChapterList),
 }
@@ -367,7 +366,7 @@ impl TsukimiMPV {
             .observe_property("demuxer-cache-time", libmpv2::Format::Int64, 5)
             .unwrap();
         event_context
-            .observe_property("time-pos", libmpv2::Format::Int64, 6)
+            .observe_property("time-pos", libmpv2::Format::Double, 6)
             .unwrap();
         event_context
             .observe_property("volume", libmpv2::Format::Int64, 7)
@@ -443,7 +442,7 @@ impl TsukimiMPV {
                                     }
                                 }
                                 "time-pos" => {
-                                    if let PropertyData::Int64(time) = change {
+                                    if let PropertyData::Double(time) = change {
                                         let _ =
                                             MPV_EVENT_CHANNEL.tx.send(ListenEvent::TimePos(time));
                                     }
