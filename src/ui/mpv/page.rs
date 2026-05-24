@@ -1221,9 +1221,11 @@ impl MPVPage {
 
     pub fn on_pause_update(&self, value: bool) {
         if !value {
+            self.imp().resume_danmaku();
             self.update_timeout();
             self.notify_playing();
         } else {
+            self.imp().pause_danmaku();
             self.remove_timeout();
             self.notify_player_paused();
         }
