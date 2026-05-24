@@ -137,12 +137,14 @@ jobs:
 
       - name: Upload artifact (EXE)
         uses: actions/upload-artifact@v7
+        retention-days: 30
         with:
           path: artifact/*.exe
           archive: false
 
       - name: Upload artifact (7z)
         uses: actions/upload-artifact@v7
+        retention-days: 30
         with:
           path: artifact/*.7z
           archive: false
