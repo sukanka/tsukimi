@@ -88,6 +88,16 @@
                                               </object>
                                             </child>
                                             <child>
+                                              <object class="AdwEntryRow" id="main_route_name_entry">
+                                                <property name="title" translatable="yes">Route Name (optional, e.g. "LAN", "WAN")</property>
+                                              </object>
+                                            </child>
+                                            <child>
+                                              <object class="AdwEntryRow" id="path_entry">
+                                                <property name="title" translatable="yes">URL Path Prefix (optional, e.g. for reverse proxy)</property>
+                                              </object>
+                                            </child>
+                                            <child>
                                               <object class="AdwEntryRow" id="username_entry">
                                                 <property name="title" translatable="yes">Username</property>
                                               </object>
@@ -97,6 +107,51 @@
                                                 <property name="title" translatable="yes">Password</property>
                                                 <property name="activates-default">true</property>
                                                 <signal name="entry-activated" handler="on_password_entry_activated" swapped="yes"/>
+                                              </object>
+                                            </child>
+                                          </object>
+                                        </child>
+                                        <child>
+                                          <object class="AdwPreferencesGroup">
+                                            <property name="title" translatable="yes">Additional Routes</property>
+                                            <property name="description" translatable="yes">Alternative network routes. You can switch between them after logging in. Re-login is required when switching.</property>
+                                            <property name="header-suffix">
+                                              <object class="GtkButton">
+                                                <property name="label" translatable="yes">Add</property>
+                                                <property name="valign">center</property>
+                                                <property name="tooltip-text" translatable="yes">Add Route</property>
+                                                <signal name="clicked" handler="on_add_route_clicked" swapped="yes" />
+                                                <style>
+                                                  <class name="flat" />
+                                                </style>
+                                              </object>
+                                            </property>
+                                            <child>
+                                              <object class="GtkStack" id="routes_stack">
+                                                <child>
+                                                  <object class="GtkStackPage">
+                                                    <property name="name">empty</property>
+                                                    <property name="child">
+                                                      <object class="AdwActionRow">
+                                                        <property name="title" translatable="yes">No additional routes</property>
+                                                        <property name="subtitle" translatable="yes">Click the + button to add a route.</property>
+                                                      </object>
+                                                    </property>
+                                                  </object>
+                                                </child>
+                                                <child>
+                                                  <object class="GtkStackPage">
+                                                    <property name="name">list</property>
+                                                    <property name="child">
+                                                      <object class="GtkListBox" id="routes_listbox">
+                                                        <property name="selection-mode">none</property>
+                                                        <style>
+                                                          <class name="boxed-list" />
+                                                        </style>
+                                                      </object>
+                                                    </property>
+                                                  </object>
+                                                </child>
                                               </object>
                                             </child>
                                           </object>
@@ -149,4 +204,88 @@
       </object>
     </child>
   </template>
+  <object class="AdwDialog" id="route_dialog">
+    <property name="title" translatable="yes">Route</property>
+    <property name="follows-content-size">1</property>
+    <property name="width-request">420</property>
+    <child>
+      <object class="AdwToolbarView">
+        <child type="top">
+          <object class="AdwHeaderBar">
+            <property name="show-end-title-buttons">False</property>
+            <property name="show-start-title-buttons">False</property>
+            <child>
+              <object class="GtkButton">
+                <property name="label" translatable="yes">Cancel</property>
+                <property name="action-name">window.close</property>
+              </object>
+            </child>
+            <child type="end">
+              <object class="GtkButton">
+                <property name="label" translatable="yes">Save</property>
+                <property name="receives-default">True</property>
+                <signal name="clicked" handler="on_route_save_clicked" swapped="yes" />
+                <style>
+                  <class name="suggested-action" />
+                </style>
+              </object>
+            </child>
+          </object>
+        </child>
+        <child>
+          <object class="AdwClamp">
+            <property name="margin-top">24</property>
+            <property name="margin-bottom">24</property>
+            <property name="margin-start">18</property>
+            <property name="margin-end">18</property>
+            <child>
+              <object class="GtkBox">
+                <property name="orientation">vertical</property>
+                <property name="spacing">18</property>
+                <child>
+                  <object class="AdwPreferencesGroup">
+                    <child>
+                      <object class="AdwEntryRow" id="route_name_entry">
+                        <property name="title" translatable="yes">Name</property>
+                      </object>
+                    </child>
+                    <child>
+                      <object class="AdwEntryRow" id="route_server_entry">
+                        <property name="title" translatable="yes">Server Address</property>
+                        <child type="prefix">
+                          <object class="GtkDropDown" id="route_protocol">
+                            <property name="valign">center</property>
+                            <property name="model">
+                              <object class="GtkStringList">
+                                <items>
+                                  <item>http://</item>
+                                  <item>https://</item>
+                                </items>
+                              </object>
+                            </property>
+                          </object>
+                        </child>
+                        <child type="suffix">
+                          <object class="GtkEntry" id="route_port_entry">
+                            <property name="halign">end</property>
+                            <property name="valign">center</property>
+                            <property name="placeholder-text" translatable="yes">Port</property>
+                          </object>
+                        </child>
+                      </object>
+                    </child>
+                    <child>
+                      <object class="AdwEntryRow" id="route_path_entry">
+                        <property name="title" translatable="yes">URL Path Prefix (optional, e.g. for reverse proxy)</property>
+                      </object>
+                    </child>
+                  </object>
+                </child>
+              </object>
+            </child>
+          </object>
+        </child>
+      </object>
+    </child>
+  </object>
 </interface>

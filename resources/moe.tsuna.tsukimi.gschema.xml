@@ -222,5 +222,23 @@
       <summary>Whether the danmaku is enabled</summary>
       <default>false</default>
     </key>
+    <key name="danmaku-appid" type="s">
+      <summary>Danmaku custom app id</summary>
+      <default>""</default>
+    </key>
+    <key name="danmaku-appsecret" type="s">
+      <summary>Danmaku custom app secret</summary>
+      <default>""</default>
+    </key>
+    <key name="danmaku-servers" type="s">
+      <summary>Danmaku custom server list</summary>
+      <description>JSON array of {name, url} objects for dandanAPI-compatible servers</description>
+      <default>'[]'</default>
+    </key>
+    <key name="danmaku-active-server" type="i">
+      <summary>Active danmaku server index</summary>
+      <description>-1 = default (api.dandanplay.net), 0+ = index into custom servers list</description>
+      <default>-1</default>
+    </key>
   </schema>
 </schemalist>

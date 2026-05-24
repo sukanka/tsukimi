@@ -1,6 +1,9 @@
 #![allow(deprecated)]
 // FIXME: replace GtkShortcutsWindow when the replacement is appeared on libadwaita
 
+use std::cell::{Cell, RefCell};
+use std::rc::Rc;
+
 use adw::prelude::*;
 use gettextrs::gettext;
 use glib::Object;
@@ -12,6 +15,8 @@ use gtk::{
     glib,
     subclass::prelude::*,
 };
+
+use danmakw::DanmakwArea;
 
 use super::{
     mpvglarea::MPVGLArea,
@@ -29,6 +34,10 @@ use super::{
 };
 use crate::{
     client::{
+        apply_danmaku_active_server,
+        danmaku_combo_to_server_index,
+        danmaku_server_to_combo_index,
+        DanmakuConvert,
         error::UserFacingError,
         jellyfin_client::{
             BackType,
@@ -62,10 +71,7 @@ use crate::{
         spawn_tokio,
     },
 };
-
-const MIN_MOTION_TIME: i64 = 100000;
-const PREV_CHAPTER_KEYVAL: u32 = 65366;
-const NEXT_CHAPTER_KEYVAL: u32 = 65365;
+use anyhow::Result;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct PlaybackDirectMode {
@@ -86,27 +92,14 @@ impl PlaybackDirectMode {
             enable_direct_stream: true,
         }
     }
-
-    fn fallback(self) -> Option<Self> {
-        match (self.enable_direct_play, self.enable_direct_stream) {
-            (true, true) => Some(Self {
-                enable_direct_play: false,
-                enable_direct_stream: true,
-            }),
-            (false, true) => Some(Self {
-                enable_direct_play: false,
-                enable_direct_stream: false,
-            }),
-            (false, false) => None,
-            _ => unreachable!(),
-        }
-    }
 }
 
-#[derive(Clone)]
-pub struct FallbackContext {
-    selected: Option<SelectedVideoSubInfo>,
-    start_seconds: f64,
+const MIN_MOTION_TIME: i64 = 100000;
+const PREV_CHAPTER_KEYVAL: u32 = 65366;
+const NEXT_CHAPTER_KEYVAL: u32 = 65365;
+
+pub fn is_libmpv() -> bool {
+    SETTINGS.mpv_video_output() == 0
 }
 
 mod imp {
@@ -131,7 +124,6 @@ mod imp {
     use once_cell::sync::OnceCell;
 
     use crate::{
-        APP_ID,
         client::structs::Back,
         ui::{
             models::SETTINGS,
@@ -145,6 +137,8 @@ mod imp {
             widgets::action_row::AActionRow,
         },
     };
+
+    use super::*;
 
     #[derive(CompositeTemplate, Default, glib::Properties)]
     #[template(resource = "/moe/tsuna/tsukimi/ui/mpvpage.ui")]
@@ -181,11 +175,15 @@ mod imp {
         #[template_child]
         pub menu_button: TemplateChild<gtk::MenuButton>,
         #[template_child]
+        pub danmaku_button: TemplateChild<gtk::Button>,
+        #[template_child]
         pub menu_popover: TemplateChild<gtk::Popover>,
         #[template_child]
         pub title_label1: TemplateChild<gtk::Label>,
         #[template_child]
         pub title_label2: TemplateChild<gtk::Label>,
+        #[template_child]
+        pub route_switch_button: TemplateChild<gtk::MenuButton>,
         #[template_child]
         pub speed_spin: TemplateChild<gtk::SpinButton>,
         #[template_child]
@@ -197,7 +195,6 @@ mod imp {
         pub timeout: RefCell<Option<glib::source::SourceId>>,
         pub back_timeout: RefCell<Option<glib::source::SourceId>>,
         pub back: RefCell<Option<Back>>,
-        pub seeking: RefCell<bool>,
         pub x: RefCell<f64>,
         pub y: RefCell<f64>,
         pub last_motion_time: RefCell<i64>,
@@ -207,12 +204,73 @@ mod imp {
         pub shortcuts_window: RefCell<Option<ShortcutsWindow>>,
         #[cfg(target_os = "linux")]
         pub mpris_server: OnceCell<LocalServer<super::MPVPage>>,
+        #[cfg(target_os = "linux")]
+        pub mpris_initializing: std::cell::Cell<bool>,
+        pub cached_art_url: RefCell<Option<String>>,
+        pub cached_art_id: RefCell<String>,
 
         #[template_child]
         pub volume_adj: TemplateChild<gtk::Adjustment>,
 
         #[template_child]
         pub volume_bar: TemplateChild<VolumeBar>,
+
+        #[template_child]
+        pub video_overlay: TemplateChild<gtk::Overlay>,
+
+        #[template_child]
+        pub danmaku_area: TemplateChild<DanmakwArea>,
+
+        #[template_child]
+        pub danmaku_page: TemplateChild<adw::PreferencesPage>,
+
+        #[template_child]
+        pub danmaku_popover: TemplateChild<gtk::Popover>,
+
+        #[template_child]
+        pub danmaku_switch: TemplateChild<gtk::Switch>,
+
+        #[template_child]
+        pub danmaku_appid_row: TemplateChild<adw::EntryRow>,
+
+        #[template_child]
+        pub danmaku_appsecret_row: TemplateChild<adw::PasswordEntryRow>,
+
+        #[template_child]
+        pub danmaku_server_combo: TemplateChild<adw::ComboRow>,
+
+        #[template_child]
+        pub danmaku_anime_row: TemplateChild<adw::EntryRow>,
+
+        #[template_child]
+        pub danmaku_episode_row: TemplateChild<adw::EntryRow>,
+
+        #[template_child]
+        pub danmaku_tmdb_row: TemplateChild<adw::EntryRow>,
+
+        #[template_child]
+        pub danmaku_top_padding_adj: TemplateChild<gtk::Adjustment>,
+
+        #[template_child]
+        pub danmaku_font_size_adj: TemplateChild<gtk::Adjustment>,
+
+        #[template_child]
+        pub topcenter_danmaku_max_lines_adj: TemplateChild<gtk::Adjustment>,
+
+        #[template_child]
+        pub scroll_danmaku_max_lines_adj: TemplateChild<gtk::Adjustment>,
+
+        #[template_child]
+        pub bottomcenter_danmaku_max_lines_adj: TemplateChild<gtk::Adjustment>,
+
+        #[template_child]
+        pub danmaku_speed_adj: TemplateChild<gtk::Adjustment>,
+
+        #[template_child]
+        pub danmaku_row_spacing_adj: TemplateChild<gtk::Adjustment>,
+
+        #[template_child]
+        pub danmaku_opacity_adj: TemplateChild<gtk::Adjustment>,
 
         #[property(get, set, nullable)]
         pub current_video: RefCell<Option<TuItem>>,
@@ -222,11 +280,10 @@ mod imp {
         pub key_vaild: RefCell<bool>,
 
         pub video_version_matcher: RefCell<Option<String>>,
-        pub fallback_context: RefCell<Option<super::FallbackContext>>,
-        pub playback_direct_mode: RefCell<super::PlaybackDirectMode>,
-        pub queued_playback_direct_mode: RefCell<Option<super::PlaybackDirectMode>>,
-        pub retrying_playback: Cell<bool>,
-        pub allow_fallback: Cell<bool>,
+
+        pub danmaku_client: OnceCell<dandanapi::DanDanClient>,
+
+        pub danmaku_list: RefCell<Option<Vec<danmakw::Danmaku>>>,
     }
 
     #[glib::object_subclass]
@@ -300,6 +357,10 @@ mod imp {
         fn constructed(&self) {
             self.parent_constructed();
 
+            self.danmaku_popover.get().set_parent(&*self.menu_button);
+
+            // Route switch removed from mpv (playing) page per user requirement
+            self.route_switch_button.get().set_visible(false);
             SETTINGS
                 .bind(
                     "mpv-show-buffer-speed",
@@ -310,6 +371,77 @@ mod imp {
 
             SETTINGS
                 .bind("mpv-default-volume", &self.volume_adj.get(), "value")
+                .build();
+
+            SETTINGS
+                .bind("is-danmaku-enabled", &self.danmaku_switch.get(), "active")
+                .build();
+
+            if SETTINGS.has_danmaku_custom_credentials_keys() {
+                SETTINGS
+                    .bind("danmaku-appid", &self.danmaku_appid_row.get(), "text")
+                    .build();
+
+                SETTINGS
+                    .bind(
+                        "danmaku-appsecret",
+                        &self.danmaku_appsecret_row.get(),
+                        "text",
+                    )
+                    .build();
+            } else {
+                tracing::warn!(
+                    "GSettings keys danmaku-appid/danmaku-appsecret not found, custom DanDan credentials disabled"
+                );
+            }
+
+            self.obj().rebuild_server_list();
+
+            self.danmaku_area
+                .set_enable_danmaku(SETTINGS.is_danmaku_enabled());
+
+            self.danmaku_font_size_adj
+                .bind_property("value", &self.danmaku_area.get(), "font-size")
+                .flags(glib::BindingFlags::BIDIRECTIONAL)
+                .build();
+
+            self.danmaku_top_padding_adj
+                .bind_property("value", &self.danmaku_area.get(), "top-padding")
+                .flags(glib::BindingFlags::BIDIRECTIONAL)
+                .build();
+
+            self.scroll_danmaku_max_lines_adj
+                .bind_property("value", &self.danmaku_area.get(), "max-lines")
+                .flags(glib::BindingFlags::BIDIRECTIONAL)
+                .build();
+
+            self.bottomcenter_danmaku_max_lines_adj
+                .bind_property("value", &self.danmaku_area.get(), "bottom-center-max-lines")
+                .flags(glib::BindingFlags::BIDIRECTIONAL)
+                .build();
+
+            self.topcenter_danmaku_max_lines_adj
+                .bind_property("value", &self.danmaku_area.get(), "top-center-max-lines")
+                .flags(glib::BindingFlags::BIDIRECTIONAL)
+                .build();
+
+            self.danmaku_speed_adj
+                .bind_property("value", &self.danmaku_area.get(), "speed-factor")
+                .flags(glib::BindingFlags::BIDIRECTIONAL)
+                .build();
+
+            self.danmaku_row_spacing_adj
+                .bind_property("value", &self.danmaku_area.get(), "row-spacing")
+                .flags(glib::BindingFlags::BIDIRECTIONAL)
+                .build();
+
+            self.danmaku_opacity_adj
+                .bind_property("value", &self.danmaku_area.get(), "opacity")
+                .flags(glib::BindingFlags::BIDIRECTIONAL)
+                .build();
+
+            SETTINGS
+                .bind("danmaku-opacity", &self.danmaku_opacity_adj.get(), "value")
                 .build();
 
             self.video_scale.set_player(Some(&self.video.get()));
@@ -329,22 +461,69 @@ mod imp {
 
             obj.listen_events();
 
-            // Initialize MPRIS server
-            #[cfg(target_os = "linux")]
-            glib::spawn_future_local(glib::clone!(
-                #[weak(rename_to = imp)]
-                self,
-                async move {
-                    let app_id = format!("{}.{}", APP_ID, "mpv");
-                    if let Err(e) = imp.obj().initialize_mpris(&app_id).await {
-                        tracing::warn!("Failed to initialize mpris server: {}", e);
+            self.init_dandanapi_client();
+
+            obj.imp().danmaku_popover.get().connect_show(glib::clone!(
+                #[weak(rename_to = obj)]
+                obj,
+                move |_| {
+                    obj.rebuild_server_list();
+                    let Some(item) = obj.current_video() else {
+                        return;
+                    };
+
+                    let is_movie = item.item_type() == "Movie";
+                    let episode = if is_movie {
+                        String::new()
+                    } else if item.index_number() > 0 {
+                        item.index_number().to_string()
+                    } else {
+                        item.name()
+                    };
+                    obj.imp().danmaku_episode_row.set_text(&episode);
+
+                    // 剧名：立即填充
+                    if let Some(series_name) = item.series_name() {
+                        obj.imp().danmaku_anime_row.set_text(&series_name);
+                    } else {
+                        obj.imp().danmaku_anime_row.set_text(&item.name());
+                    }
+
+                    // 尝试通过 API 获取 tmdb_id
+                    {
+                        let item_clone = item.clone();
+                        spawn(glib::clone!(
+                            #[weak(rename_to = obj)]
+                            obj,
+                            async move {
+                                if let Some(series_id) = item_clone.series_id() {
+                                    let sid = series_id.clone();
+                                    if let Ok(info) = spawn_tokio(async move {
+                                        JELLYFIN_CLIENT.get_item_info(&sid).await
+                                    })
+                                    .await
+                                    {
+                                        if let Some(tmdb) = info.provider_ids.and_then(|p| p.tmdb) {
+                                            obj.imp().danmaku_tmdb_row.set_text(&tmdb);
+                                        }
+                                    }
+                                }
+                            }
+                        ));
                     }
                 }
             ));
         }
     }
 
-    impl WidgetImpl for MPVPage {}
+    impl WidgetImpl for MPVPage {
+        fn unrealize(&self) {
+            self.video_overlay
+                .get()
+                .remove_overlay(&self.danmaku_area.get());
+            self.parent_unrealize();
+        }
+    }
 
     impl WindowImpl for MPVPage {}
 
@@ -379,6 +558,131 @@ mod imp {
             }
             self.paused.set(paused);
         }
+
+        pub(super) fn init_dandanapi_client(&self) {
+            use crate::client::*;
+            use dandanapi::*;
+
+            // Apply the active server URL
+            self.obj().apply_active_server();
+
+            // Prefer live UI input to avoid race with Settings binding propagation.
+            let appid_text = self.danmaku_appid_row.text().trim().to_string();
+            let appsecret_text = self.danmaku_appsecret_row.text().trim().to_string();
+            let has_custom_appid = !appid_text.is_empty();
+            let has_custom_appsecret = !appsecret_text.is_empty();
+
+            let init_result = if has_custom_appid && has_custom_appsecret {
+                DanDanClient::init(appid_text, appsecret_text)
+            } else if !has_custom_appid && !has_custom_appsecret {
+                let generator = SecretGenerator::new(
+                    include_bytes!("../../../secret/secret").to_vec(),
+                    SECRETE_KEY.to_string(),
+                );
+                DanDanClient::init(X_APPID.to_string(), generator)
+            } else {
+                self.danmaku_page.set_description(&gettext(
+                    "Please fill both App ID and App Secret, or leave both empty.",
+                ));
+                self.obj().set_key_vaild(false);
+                return;
+            };
+
+            let Ok(()) = init_result else {
+                self.danmaku_page.set_description(&gettext(
+                    "Danmaku credential is invalid. Set App ID and App Secret to continue.",
+                ));
+                self.obj().set_key_vaild(false);
+                return;
+            };
+
+            // I dont know why but this is required
+            self.obj().set_key_vaild(true);
+
+            self.danmaku_client.get_or_init(DanDanClient::instance);
+        }
+
+        pub fn pause_danmaku(&self) {
+            self.danmaku_area.pause();
+        }
+
+        pub fn resume_danmaku(&self) {
+            self.danmaku_area.play();
+        }
+
+        pub fn init_danmaku(&self, danmaku: Vec<danmakw::Danmaku>, time_milis: f64) {
+            self.danmaku_list.replace(Some(danmaku.clone()));
+
+            if super::is_libmpv() {
+                self.danmaku_area.set_visible(true);
+                self.danmaku_area.set_danmaku(danmaku);
+                self.danmaku_area.seek(time_milis);
+            } else {
+                self.danmaku_area.set_visible(false);
+                self.load_danmaku_ass(&danmaku);
+            }
+        }
+
+        pub fn load_danmaku_ass(&self, danmaku: &[danmakw::Danmaku]) {
+            use crate::ui::mpv::danmaku_ass;
+            let danmaku_area = &self.danmaku_area;
+            let opacity = self.danmaku_opacity_adj.value();
+
+            let font_size = if danmaku_area.font_size() > 0 {
+                danmaku_area.font_size()
+            } else {
+                24
+            };
+            let max_scroll = if danmaku_area.max_lines() > 0 {
+                danmaku_area.max_lines()
+            } else {
+                20
+            };
+            let max_top = if danmaku_area.top_center_max_lines() > 0 {
+                danmaku_area.top_center_max_lines()
+            } else {
+                5
+            };
+            let max_bottom = if danmaku_area.bottom_center_max_lines() > 0 {
+                danmaku_area.bottom_center_max_lines()
+            } else {
+                5
+            };
+            let row_spacing = danmaku_area.row_spacing();
+            let top_padding = danmaku_area.top_padding();
+            let speed = if danmaku_area.speed_factor() > 0.0 {
+                danmaku_area.speed_factor()
+            } else {
+                1.0
+            };
+            let font_name = danmaku_area.font_name().to_string();
+
+            let config = danmaku_ass::AssDanmakuConfig {
+                font_name,
+                font_size,
+                row_spacing,
+                max_scroll_lines: max_scroll,
+                max_top_lines: max_top,
+                max_bottom_lines: max_bottom,
+                top_padding,
+                speed_factor: speed.max(0.1),
+                opacity: opacity.max(0.01),
+            };
+
+            let events = danmaku_ass::prepare_overlay_events(danmaku, &config);
+            tracing::info!(
+                "Danmaku overlay: {} comments → {} events",
+                danmaku.len(),
+                events.len()
+            );
+            *danmaku_ass::OVERLAY_STATE.write().unwrap() = Some((events, config));
+        }
+
+        pub fn remove_danmaku_ass(&self) {
+            use crate::ui::mpv::danmaku_ass;
+            *danmaku_ass::OVERLAY_STATE.write().unwrap() = None;
+            self.video.clear_danmaku_overlay();
+        }
     }
 }
 
@@ -401,71 +705,9 @@ impl MPVPage {
         Object::new()
     }
 
-    fn mark_stream_failed(&self) {
-        let imp = self.imp();
-        imp.allow_fallback.set(false);
-        imp.loading_box.set_visible(false);
-        imp.spinner.set_visible(false);
-    }
-
-    fn is_loading_failed(value: &str) -> bool {
-        value.contains("-13")
-    }
-
-    fn retry_fallback_playback(&self) -> bool {
-        let next_mode = {
-            let imp = self.imp();
-            if imp.retrying_playback.get() {
-                return true;
-            }
-            let Some(next_mode) = imp.playback_direct_mode.borrow().fallback() else {
-                return false;
-            };
-            imp.retrying_playback.set(true);
-            next_mode
-        };
-
-        let Some(context) = self.imp().fallback_context.take() else {
-            self.imp().retrying_playback.set(false);
-            return false;
-        };
-        let Some(item) = self.current_video() else {
-            self.imp().retrying_playback.set(false);
-            return false;
-        };
-
-        tracing::info!(
-            "Retrying playback with EnableDirectPlay={}, EnableDirectStream={}",
-            next_mode.enable_direct_play,
-            next_mode.enable_direct_stream
-        );
-
-        let episode_list = self.imp().current_episode_list.take();
-        self.imp()
-            .queued_playback_direct_mode
-            .replace(Some(next_mode));
-        self.mpv().stop();
-
-        spawn_g_timeout(glib::clone!(
-            #[weak(rename_to = obj)]
-            self,
-            async move {
-                obj.play(
-                    context.selected,
-                    item,
-                    episode_list,
-                    None,
-                    context.start_seconds,
-                );
-            }
-        ));
-
-        true
-    }
-
     pub fn play(
         &self, selected: Option<SelectedVideoSubInfo>, item: TuItem, episode_list: Vec<TuItem>,
-        video_matcher: Option<String>, start_seconds: f64,
+        video_matcher: Option<String>, per: f64,
     ) {
         let (title1, title2) = if let Some(series_name) = item.series_name() {
             let episode_info = format!(
@@ -488,7 +730,7 @@ impl MPVPage {
             .map(|t| format!("{title1} - {t}"))
             .unwrap_or_else(|| title1);
 
-        self.mpv().set_property("force-media-title", media_title);
+        self.imp().video.set_property("force-media-title", media_title);
 
         let id = item.id();
         self.imp().video_scale.reset_scale();
@@ -502,23 +744,12 @@ impl MPVPage {
 
         self.set_current_video(Some(item.clone()));
         self.imp().current_episode_list.replace(episode_list);
-        self.imp().fallback_context.replace(Some(FallbackContext {
-            selected: selected.to_owned(),
-            start_seconds,
-        }));
-        let direct_mode = self
-            .imp()
-            .queued_playback_direct_mode
-            .borrow_mut()
-            .take()
-            .unwrap_or_else(PlaybackDirectMode::direct);
-        self.imp().playback_direct_mode.replace(direct_mode);
-        self.imp().retrying_playback.set(false);
-        self.imp().allow_fallback.set(true);
 
         spawn_g_timeout(glib::clone!(
             #[weak(rename_to = obj)]
             self,
+            #[strong]
+            selected,
             async move {
                 let imp = obj.imp();
                 imp.spinner.set_visible(true);
@@ -526,32 +757,25 @@ impl MPVPage {
                 imp.network_speed_label
                     .set_text(&gettext("Initializing..."));
 
-                let sub_stream_index = selected.as_ref().map(|s| s.sub_index);
-                let media_source_id = selected.as_ref().map(|s| s.media_source_id.clone());
+                let sub_stream_index = selected.to_owned().map(|s| s.sub_index);
+                let media_source_id = selected.to_owned().map(|s| s.media_source_id);
                 let id_clone = id.to_owned();
                 let playback_info = match spawn_tokio(async move {
                     JELLYFIN_CLIENT
-                        .get_playbackinfo(
-                            &id_clone,
-                            sub_stream_index,
-                            media_source_id,
-                            true,
-                            direct_mode,
-                        )
+                        .get_playbackinfo(&id_clone, sub_stream_index, media_source_id, true, PlaybackDirectMode::direct())
                         .await
                 })
                 .await
                 {
                     Ok(playback_info) => playback_info,
                     Err(e) => {
-                        obj.mark_stream_failed();
                         obj.toast(e.to_user_facing());
                         return;
                     }
                 };
 
                 let media_source =
-                    if let Some(video_stream_index) = selected.as_ref().map(|s| s.video_index) {
+                    if let Some(video_stream_index) = selected.to_owned().map(|s| s.video_index) {
                         playback_info.media_sources.get(video_stream_index as usize)
                     } else {
                         let video_version_list: Vec<_> = playback_info
@@ -569,25 +793,25 @@ impl MPVPage {
                     };
 
                 let Some(media_source) = media_source else {
-                    obj.mark_stream_failed();
                     obj.toast(gettext("No media source found"));
                     return;
                 };
 
+                let play_session_id = playback_info.play_session_id.to_owned();
                 let back = Back {
                     id: id.to_owned(),
-                    playsessionid: playback_info.play_session_id.to_owned(),
+                    playsessionid: play_session_id.to_owned(),
                     mediasourceid: media_source.id.to_owned(),
-                    livestreamid: media_source.live_stream_id.to_owned(),
-                    playmethod: media_source_play_method(media_source),
+                    livestreamid: None,
+                    playmethod: "",
                     tick: media_source.run_time_ticks.unwrap_or(0),
-                    start_tick: glib::real_time() as u64 * 10,
+                    start_tick: glib::DateTime::now_local().unwrap().to_unix() as u64,
                 };
 
                 imp.back.replace(Some(back));
 
                 let media_stream =
-                    if let Some(sub_stream_index) = selected.as_ref().map(|s| s.sub_index) {
+                    if let Some(sub_stream_index) = selected.to_owned().map(|s| s.sub_index) {
                         media_source.media_streams.get(sub_stream_index as usize)
                     } else {
                         let sub_version_list: Vec<_> = media_source
@@ -606,7 +830,7 @@ impl MPVPage {
                             .and_then(|index| media_source.media_streams.get(index.0 as usize))
                     };
 
-                if let Some(slang) = selected.map(|s| s.sub_lang) {
+                if let Some(slang) = selected.to_owned().map(|s| s.sub_lang) {
                     imp.video.set_slang(slang);
                 } else {
                     imp.video
@@ -623,7 +847,6 @@ impl MPVPage {
                                     id.to_owned(),
                                     stream,
                                     media_source.id.to_owned(),
-                                    direct_mode,
                                 )
                                 .await
                         }
@@ -633,36 +856,36 @@ impl MPVPage {
 
                 imp.suburl.replace(sub_url);
 
-                let video_url = match media_source_stream_url(media_source).await {
+                let video_url = match extract_url(media_source).await {
                     Some(video_url) => video_url,
                     None => {
-                        obj.mark_stream_failed();
                         obj.toast(gettext("No media source found"));
                         return;
                     }
                 };
 
-                imp.video.play(&video_url, start_seconds);
+                imp.video.play(&video_url, per);
+
+                if SETTINGS.is_danmaku_enabled() {
+                    imp.pause_danmaku();
+                    obj.load_danmaku().await;
+                } else {
+                    imp.danmaku_list.replace(None);
+                };
+                obj.notify_playing();
             }
         ));
-        self.notify_playing();
     }
 
     async fn external_sub_url_without_selected_source(
         &self, id: String, media_stream: &MediaStream, media_source_id: String,
-        direct_mode: PlaybackDirectMode,
     ) -> Option<String> {
+        let id_clone = id.to_owned();
         let stream_index = media_stream.index;
         let media_source_id_clone = media_source_id.to_owned();
         let playback_info = spawn_tokio(async move {
             JELLYFIN_CLIENT
-                .get_playbackinfo(
-                    &id,
-                    Some(stream_index),
-                    Some(media_source_id),
-                    true,
-                    direct_mode,
-                )
+                .get_playbackinfo(&id_clone, Some(stream_index), Some(media_source_id), true, PlaybackDirectMode::direct())
                 .await
         })
         .await
@@ -755,20 +978,19 @@ impl MPVPage {
             return;
         };
 
-        let next_item = {
-            let video_list = self.imp().current_episode_list.borrow();
-            video_list.iter().enumerate().find_map(|(i, item)| {
-                // Don't use id() here, because the same video maybe have different id
-                if item.index_number() == current_video.index_number()
-                    && item.parent_index_number() == current_video.parent_index_number()
-                {
-                    let new_index = (i as isize + offset) as usize;
-                    video_list.get(new_index).cloned()
-                } else {
-                    None
-                }
-            })
-        };
+        let video_list = self.imp().current_episode_list.borrow().to_owned();
+
+        let next_item = video_list.iter().enumerate().find_map(|(i, item)| {
+            // Don't use id() here, because the same video maybe have different id
+            if item.index_number() == current_video.index_number()
+                && item.parent_index_number() == current_video.parent_index_number()
+            {
+                let new_index = (i as isize + offset) as usize;
+                video_list.get(new_index).cloned()
+            } else {
+                None
+            }
+        });
 
         let Some(next_item) = next_item else {
             self.toast(gettext("No more video found"));
@@ -780,8 +1002,7 @@ impl MPVPage {
     }
 
     pub async fn in_play_item(&self, item: TuItem) {
-        let episode_list = self.imp().current_episode_list.take();
-        self.play(None, item, episode_list, None, 0.0);
+        self.play(None, item, vec![], None, 0.0);
     }
 
     pub async fn on_next_video(&self) {
@@ -816,14 +1037,18 @@ impl MPVPage {
                             obj.update_duration(value);
                         }
                         ListenEvent::PausedForCache(true) | ListenEvent::Seek => {
+                            obj.imp().pause_danmaku();
                             obj.update_seeking(true);
                         }
-                        ListenEvent::PausedForCache(false) | ListenEvent::PlaybackRestart => {
-                            let was_seeking = obj.get_seeking();
+                        ListenEvent::PausedForCache(false) => {
+                            obj.imp().resume_danmaku();
                             obj.update_seeking(false);
-                            if was_seeking {
-                                obj.handle_callback(BackType::Back);
-                            }
+                        }
+                        ListenEvent::PlaybackRestart => {
+                            obj.imp().resume_danmaku();
+                            obj.update_seeking(false);
+                            let position = obj.imp().video.position();
+                            obj.notify_seeked((position * 1000.0) as i64);
                         }
                         ListenEvent::Eof(value) => {
                             obj.on_end_file(value);
@@ -838,7 +1063,7 @@ impl MPVPage {
                             obj.on_cache_speed_update(value);
                         }
                         ListenEvent::FileLoaded => {
-                            obj.on_file_loaded();
+                            obj.on_start_file();
                         }
                         ListenEvent::TrackList(value) => {
                             obj.set_audio_and_video_tracks_dropdown(value);
@@ -856,7 +1081,7 @@ impl MPVPage {
                             obj.on_cache_time_update(value);
                         }
                         ListenEvent::TimePos(value) => {
-                            obj.scale_cb(value);
+                            obj.scale_cb(value as f64);
                         }
                         ListenEvent::ChapterList(value) => {
                             obj.on_chapter_list(value);
@@ -868,10 +1093,36 @@ impl MPVPage {
     }
 
     fn on_shutdown(&self) {
-        close_on_error!(
-            self,
-            gettext("MPV has been shutdown, Application will exit.\nTsukimi can't restart MPV.",)
-        );
+        if self.imp().video.is_ipc() {
+            // IPC: mpv window closed, report position before cleanup, return to main
+            self.handle_callback(BackType::Stop);
+            self.imp().video.stop_ipc();
+            self.imp().danmaku_list.replace(None);
+            self.set_current_video(None::<TuItem>);
+            let root = self.root();
+            if let Some(window) =
+                root.and_downcast_ref::<crate::ui::widgets::window::Window>()
+            {
+                window.imp().stack.set_visible_child_name("main");
+                window.allow_suspend();
+
+                spawn_g_timeout(glib::clone!(
+                    #[weak]
+                    window,
+                    async move {
+                        window.update_item_page().await;
+                    }
+                ));
+            }
+            self.set_reveal_overlay(true);
+        } else {
+            close_on_error!(
+                self,
+                gettext(
+                    "MPV has been shutdown, Application will exit.\nTsukimi can't restart MPV.",
+                )
+            );
+        }
     }
 
     fn on_cache_time_update(&self, value: i64) {
@@ -899,8 +1150,8 @@ impl MPVPage {
         self.imp().volume_bar.set_level(value as f64 / 100.0);
     }
 
-    fn scale_cb(&self, value: i64) {
-        self.imp().video_scale.set_value(value as f64);
+    fn scale_cb(&self, value: f64) {
+        self.imp().video_scale.set_value(value);
     }
 
     #[template_callback]
@@ -921,9 +1172,8 @@ impl MPVPage {
         imp.video.set_volume(btn.value() as i64);
     }
 
-    fn on_file_loaded(&self) {
+    fn on_start_file(&self) {
         let imp = self.imp();
-        imp.allow_fallback.set(false);
         if let Some(suburl) = imp.suburl.borrow().as_ref() {
             imp.video.add_sub(suburl);
         }
@@ -932,7 +1182,6 @@ impl MPVPage {
     }
 
     fn update_seeking(&self, seeking: bool) {
-        self.imp().seeking.replace(seeking);
         let spinner = &self.imp().spinner;
         let loading_box = &self.imp().loading_box;
         if seeking {
@@ -942,10 +1191,6 @@ impl MPVPage {
             loading_box.set_visible(false);
             spinner.set_visible(false);
         }
-    }
-
-    fn get_seeking(&self) -> bool {
-        *self.imp().seeking.borrow()
     }
 
     fn on_end_file(&self, value: u32) {
@@ -965,14 +1210,6 @@ impl MPVPage {
     }
 
     fn on_error(&self, value: &str) {
-        if self.imp().allow_fallback.get()
-            && Self::is_loading_failed(value)
-            && self.retry_fallback_playback()
-        {
-            return;
-        }
-
-        self.mark_stream_failed();
         self.toast(value);
     }
 
@@ -1107,13 +1344,17 @@ impl MPVPage {
         if x >= 0.0 && y >= 0.0 {
             let widget = self.pick(x, y, gtk::PickFlags::DEFAULT);
             if let Some(widget) = widget {
-                if !widget.is::<MPVGLArea>() {
+                if !widget.is::<MPVGLArea>() && !widget.is::<DanmakwArea>() {
                     return false;
                 }
             }
         }
 
         if self.imp().menu_button.is_active() {
+            return false;
+        }
+
+        if self.imp().danmaku_popover.get().is_visible() {
             return false;
         }
 
@@ -1162,19 +1403,25 @@ impl MPVPage {
     fn on_stop_clicked(&self) {
         self.handle_callback(BackType::Stop);
         self.remove_timeout();
+        self.imp().pause_danmaku();
+        self.imp().remove_danmaku_ass();
 
-        let mpv = self.mpv();
-        mpv.pause(true);
-        mpv.stop();
-        mpv.event_thread_alive
-            .store(PAUSED, std::sync::atomic::Ordering::SeqCst);
+        if self.imp().video.is_ipc() {
+            self.imp().video.stop_ipc();
+        } else {
+            let mpv = self.mpv();
+            mpv.pause(true);
+            mpv.stop();
+            mpv.event_thread_alive
+                .store(PAUSED, std::sync::atomic::Ordering::SeqCst);
+        }
+
         let root = self.root();
         let window = root
             .and_downcast_ref::<crate::ui::widgets::window::Window>()
             .unwrap();
         window.imp().stack.set_visible_child_name("main");
         window.allow_suspend();
-        window.refresh_homepage_if_needed();
 
         spawn_g_timeout(glib::clone!(
             #[weak(rename_to = obj)]
@@ -1198,11 +1445,16 @@ impl MPVPage {
     }
 
     fn handle_callback(&self, backtype: BackType) {
-        let position = self.imp().video_scale.value();
+        let position = &self.imp().video.position();
         let back = self.imp().back.borrow();
 
+        // close window when vo=gpu-next will set position to 0, so we need to ignore it
+        if position < &20.0 && (backtype != BackType::Start && backtype != BackType::Stop) {
+            return;
+        }
+
         if let Some(back) = back.as_ref() {
-            let duration = position as u64 * 10000000;
+            let duration = *position as u64 * 10000000;
             let mut back = back.to_owned();
             back.tick = duration;
             crate::utils::spawn_tokio_without_await(async move {
@@ -1243,7 +1495,29 @@ impl MPVPage {
 
     #[template_callback]
     fn left_click_cb(&self) {
-        self.imp().video.pause();
+        let imp = self.imp();
+        let popover = imp.danmaku_popover.get();
+        if popover.is_visible() {
+            popover.popdown();
+            return;
+        }
+        imp.video.pause();
+    }
+
+    #[template_callback]
+    fn on_danmaku_button_clicked(&self) {
+        let imp = self.imp();
+        let popover = imp.danmaku_popover.get();
+        if popover.is_visible() {
+            popover.popdown();
+        } else {
+            let alloc = imp.danmaku_button.allocation();
+            if let Some((x, y)) = imp.danmaku_button.translate_coordinates(&*imp.menu_button, 0.0, 0.0) {
+                let rect = gtk::gdk::Rectangle::new(x as i32, y as i32, alloc.width(), alloc.height());
+                popover.set_pointing_to(Some(&rect));
+            }
+            popover.popup();
+        }
     }
 
     #[template_callback]
@@ -1334,6 +1608,625 @@ impl MPVPage {
         self.imp().video.imp().mpv()
     }
 
+    pub async fn load_danmaku(&self) {
+        if !self.key_vaild() {
+            self.imp().danmaku_page.set_description(&gettext(
+                "Danmaku credential is invalid. Set App ID and App Secret to continue.",
+            ));
+            return;
+        }
+
+        let Some(item) = self.current_video() else {
+            return;
+        };
+
+        let (anime, episode, tmdb_id, time_ticks) = {
+            let is_movie = item.item_type() == "Movie";
+            if let Some(series_name) = item.series_name() {
+                let episode = if is_movie {
+                    String::new()
+                } else if item.index_number() > 0 {
+                    item.index_number().to_string()
+                } else {
+                    item.name()
+                };
+                (series_name, episode, None::<String>, item.playback_position_ticks())
+            } else {
+                (
+                    item.name(),
+                    String::new(),
+                    None::<String>,
+                    item.playback_position_ticks(),
+                )
+            }
+        };
+
+        let time_milis = (time_ticks / 10000) as f64;
+
+        let mut tmdb_id = tmdb_id.and_then(|id| id.parse::<i32>().ok());
+
+        // item 可能没有 tmdb_id（来自不返回 ProviderIds 的 API），按顺序尝试获取
+        if tmdb_id.is_none() {
+            let is_episode = item.item_type() == "Episode";
+            // 1. 直接查自己（仅电影适用，剧集自身的 tmdb_id 可能不准）
+            if !is_episode {
+                let id = item.id();
+                if let Ok(info) = spawn_tokio(async move {
+                    JELLYFIN_CLIENT.get_item_info(&id).await
+                })
+                .await
+                {
+                    tmdb_id = info
+                        .provider_ids
+                        .and_then(|p| p.tmdb)
+                        .and_then(|id| id.parse::<i32>().ok());
+                    tracing::debug!(?tmdb_id, "load_danmaku: from item self");
+                }
+            }
+            // 2. 再查 season（剧集用 season 的 tmdb_id 更精确）
+            if tmdb_id.is_none() {
+                if let Some(season_id) = item.season_id() {
+                    tracing::debug!(?season_id, "load_danmaku: trying season lookup");
+                    let season_id_clone = season_id.clone();
+                    if let Ok(season_item) = spawn_tokio(async move {
+                        JELLYFIN_CLIENT.get_item_info(&season_id_clone).await
+                    })
+                    .await
+                    {
+                        tmdb_id = season_item
+                            .provider_ids
+                            .and_then(|p| p.tmdb)
+                            .and_then(|id| id.parse::<i32>().ok());
+                        tracing::debug!(?tmdb_id, ?season_id, "load_danmaku: from season");
+                    }
+                } else {
+                    tracing::debug!("load_danmaku: no season_id on item");
+                }
+            }
+            // 3. 再查系列
+            if tmdb_id.is_none() {
+                if let Some(series_id) = item.series_id() {
+                    tracing::debug!(?series_id, "load_danmaku: trying series lookup");
+                    let series_id_clone = series_id.clone();
+                    if let Ok(series_item) = spawn_tokio(async move {
+                        JELLYFIN_CLIENT.get_item_info(&series_id_clone).await
+                    })
+                    .await
+                    {
+                        tmdb_id = series_item
+                            .provider_ids
+                            .and_then(|p| p.tmdb)
+                            .and_then(|id| id.parse::<i32>().ok());
+                        tracing::debug!(?tmdb_id, ?series_id, "load_danmaku: from series");
+                    }
+                } else {
+                    tracing::debug!("load_danmaku: no series_id on item");
+                }
+            }
+        }
+
+        // 有 tmdb_id 时不传 anime，避免剧名不匹配导致搜索失败
+        let search_anime = if tmdb_id.is_some() {
+            String::new()
+        } else {
+            anime
+        };
+
+        tracing::info!(anime = search_anime, episode, ?tmdb_id, "Auto danmaku search");
+
+        let imp = self.imp();
+        let response = self
+            .search_episodes(dandanapi::RequestEpisodes {
+                anime: search_anime,
+                episode,
+                tmdb_id,
+            })
+            .await;
+
+        match response {
+            Ok(response) => {
+                let episode_id = response
+                    .animes
+                    .and_then(|anims| anims.first()?.episodes.first().map(|ep| ep.episode_id));
+
+                match episode_id {
+                    Some(episode_id) => {
+                        match self.request_danmaku(episode_id).await {
+                            Ok(danmaku) => {
+                                self.imp().danmaku_page.set_description(&format!(
+                                    "{} {}",
+                                    danmaku.len(),
+                                    gettext("Danmaku Loaded")
+                                ));
+                                imp.init_danmaku(danmaku, time_milis);
+                            }
+                            Err(e) => {
+                                tracing::error!("Loading danmaku error: {}", e);
+                                self.imp()
+                                    .danmaku_page
+                                    .set_description(&gettext("No Danmaku Loaded"));
+                                imp.danmaku_list.replace(None);
+                                if is_libmpv() {
+                                    imp.danmaku_area.set_danmaku(Vec::new());
+                                } else {
+                                    imp.remove_danmaku_ass();
+                                }
+                            }
+                        }
+                    }
+                    None => {
+                        self.imp()
+                            .danmaku_page
+                            .set_description(&gettext("No Danmaku Loaded"));
+                        imp.danmaku_list.replace(None);
+                        if is_libmpv() {
+                            imp.danmaku_area.set_danmaku(Vec::new());
+                        } else {
+                            imp.remove_danmaku_ass();
+                        }
+                    }
+                }
+            }
+            Err(e) => {
+                tracing::error!("Loading danmaku error: {}", e);
+                self.imp()
+                    .danmaku_page
+                    .set_description(&gettext("No Danmaku Loaded"));
+                imp.danmaku_list.replace(None);
+                if is_libmpv() {
+                    imp.danmaku_area.set_danmaku(Vec::new());
+                } else {
+                    imp.remove_danmaku_ass();
+                }
+            }
+        }
+    }
+
+    /// Search episodes from dandanapi, returns raw response for selection
+    pub async fn search_episodes(
+        &self, request_episodes: dandanapi::RequestEpisodes,
+    ) -> Result<dandanapi::SearchEpisodesResponse> {
+        let client = self
+            .imp()
+            .danmaku_client
+            .get()
+            .ok_or_else(|| anyhow::anyhow!("Danmaku client not initialized"))?;
+
+        let route = client.route(dandanapi::Episodes(request_episodes));
+
+        spawn_tokio(async move {
+            let response = route.await?;
+            Ok(response)
+        })
+        .await
+    }
+
+    /// Load danmaku comments for a specific episode_id
+    pub async fn request_danmaku(&self, episode_id: i64) -> Result<Vec<danmakw::Danmaku>> {
+        let client = self
+            .imp()
+            .danmaku_client
+            .get()
+            .ok_or_else(|| anyhow::anyhow!("Danmaku client not initialized"))?;
+
+        let route = client.route(dandanapi::Comments {
+            episode_id,
+            request_comments: dandanapi::RequestComments {
+                from: 0,
+                with_related: true,
+                ch_convert: dandanapi::ChConvert::NONE,
+            },
+        });
+
+        let danmaku = spawn_tokio(async move {
+            let comments = route
+                .await?
+                .comments
+                .ok_or_else(|| anyhow::anyhow!("No comment found"))?;
+
+            let danmaku = comments
+                .into_iter()
+                .map(|comment| comment.into_danmaku())
+                .collect::<Vec<_>>();
+
+            Ok::<Vec<danmakw::Danmaku>, anyhow::Error>(danmaku)
+        })
+        .await?;
+
+        Ok(danmaku)
+    }
+
+    async fn fetch_anime_title(&self, tmdb_id: i32) -> Option<String> {
+        let client = self.imp().danmaku_client.get()?;
+        let route = client.route(dandanapi::Episodes(dandanapi::RequestEpisodes {
+            anime: String::new(),
+            episode: String::new(),
+            tmdb_id: Some(tmdb_id),
+        }));
+        spawn_tokio(async move {
+            let response = route.await.ok()?;
+            response.animes?.first()?.anime_title.clone().into()
+        })
+        .await
+    }
+
+    #[template_callback]
+    pub fn on_danmaku_switch_state_set(&self, state: bool) -> bool {
+        self.imp().danmaku_area.set_enable_danmaku(state);
+
+        if state {
+            if let Some(danmaku) = self.imp().danmaku_list.borrow().as_ref() {
+                if is_libmpv() {
+                    self.imp().danmaku_area.set_danmaku(danmaku.to_owned());
+                    self.imp().resume_danmaku();
+                } else {
+                    self.imp().load_danmaku_ass(danmaku);
+                }
+            } else {
+                spawn(glib::clone!(
+                    #[weak(rename_to = obj)]
+                    self,
+                    async move {
+                        obj.load_danmaku().await;
+                    }
+                ));
+            }
+        } else if is_libmpv() {
+            self.imp().danmaku_area.clear_danmaku();
+            self.imp().pause_danmaku();
+        } else {
+            self.imp().remove_danmaku_ass();
+        }
+
+        let _ = SETTINGS.set_danmaku_enabled(state);
+
+        false
+    }
+
+    #[template_callback]
+    async fn on_danmaku_search_clicked(&self) {
+        if !self.key_vaild() {
+            self.imp().danmaku_page.set_description(&gettext(
+                "Danmaku credential is invalid. Set App ID and App Secret to continue.",
+            ));
+            return;
+        }
+
+        let Some(item) = self.current_video() else {
+            self.toast(gettext("No video is currently playing"));
+            return;
+        };
+
+        let anime = self.imp().danmaku_anime_row.text().trim().to_string();
+        let episode = self.imp().danmaku_episode_row.text().trim().to_string();
+        let tmdb_id = self
+            .imp()
+            .danmaku_tmdb_row
+            .text()
+            .trim()
+            .to_string()
+            .parse::<i32>()
+            .ok();
+
+        let time_milis = (item.playback_position_ticks() / 10000) as f64;
+        tracing::info!(anime, episode, ?tmdb_id, "Manual danmaku search");
+
+        match self
+            .search_episodes(dandanapi::RequestEpisodes {
+                anime,
+                episode,
+                tmdb_id,
+            })
+            .await
+        {
+            Ok(response) => {
+                self.show_danmaku_selection_dialog(response, time_milis);
+            }
+            Err(e) => {
+                tracing::error!("Manual danmaku search error: {e}");
+                self.imp()
+                    .danmaku_page
+                    .set_description(&gettext("No Danmaku Loaded"));
+                self.toast(gettext("No Danmaku Loaded"));
+            }
+        }
+    }
+
+    fn show_danmaku_selection_dialog(
+        &self,
+        response: dandanapi::SearchEpisodesResponse,
+        time_milis: f64,
+    ) {
+        let animes = match response.animes {
+            Some(a) => a,
+            None => {
+                self.toast(gettext("No results found"));
+                return;
+            }
+        };
+
+        let total_episodes: usize = animes.iter().map(|a| a.episodes.len()).sum();
+        if total_episodes == 0 {
+            self.toast(gettext("No episodes found"));
+            return;
+        }
+        if animes.len() == 1 && animes[0].episodes.len() == 1 {
+            let episode_id = animes[0].episodes[0].episode_id;
+            let obj = self.clone();
+            spawn(glib::clone!(
+                #[weak(rename_to = obj)]
+                obj,
+                async move {
+                    match obj.request_danmaku(episode_id).await {
+                        Ok(danmaku) => {
+                            obj.imp().danmaku_page.set_description(&format!(
+                                "{} {}",
+                                danmaku.len(),
+                                gettext("Danmaku Loaded")
+                            ));
+                            obj.imp().init_danmaku(danmaku, time_milis);
+                        }
+                        Err(e) => {
+                            tracing::error!("Danmaku load error: {e}");
+                            obj.toast(gettext("Failed to load danmaku"));
+                        }
+                    }
+                }
+            ));
+            return;
+        }
+
+        let dialog = adw::Dialog::new();
+        dialog.set_title(&gettext("Select Danmaku Source"));
+        dialog.set_content_width(480);
+        dialog.set_content_height(600);
+
+        let toolbar_view = adw::ToolbarView::new();
+        let header = adw::HeaderBar::new();
+        header.set_show_end_title_buttons(false);
+        header.set_show_start_title_buttons(false);
+        toolbar_view.add_top_bar(&header);
+
+        let scrolled = gtk::ScrolledWindow::new();
+        scrolled.set_policy(gtk::PolicyType::Never, gtk::PolicyType::Automatic);
+
+        let preferences_page = adw::PreferencesPage::new();
+        let group = adw::PreferencesGroup::new();
+
+        let single_season = animes.len() == 1;
+        let selected_episode_id: Rc<Cell<Option<i64>>> = Rc::new(Cell::new(None));
+        let selected_rows: Rc<RefCell<Vec<adw::ActionRow>>> = Rc::new(RefCell::new(Vec::new()));
+
+        for anime in &animes {
+            let expander = adw::ExpanderRow::new();
+            if single_season {
+                expander.set_expanded(true);
+            }
+            expander.set_title(&anime.anime_title);
+            let type_desc = anime.type_description.as_deref().unwrap_or("");
+            let count = anime.episodes.len();
+            expander.set_subtitle(&format!(
+                "{} · {} {}",
+                if type_desc.is_empty() { "Season" } else { type_desc },
+                count,
+                if count > 1 { "episodes" } else { "episode" }
+            ));
+
+            for ep in &anime.episodes {
+                let ep_row = adw::ActionRow::new();
+                ep_row.set_title(
+                    &ep.episode_title
+                        .clone()
+                        .unwrap_or_else(|| format!("Episode {}", ep.episode_id)),
+                );
+                ep_row.set_activatable(true);
+
+                let episode_id = ep.episode_id;
+                let selected_clone = selected_episode_id.clone();
+                let all_rows = selected_rows.clone();
+
+                ep_row.connect_activated(move |row| {
+                    selected_clone.set(Some(episode_id));
+                    for r in all_rows.borrow().iter() {
+                        r.remove_css_class("danmaku-episode-selected");
+                    }
+                    row.add_css_class("danmaku-episode-selected");
+                });
+
+                selected_rows.borrow_mut().push(ep_row.clone());
+                expander.add_row(&ep_row);
+            }
+
+            group.add(&expander);
+        }
+
+        preferences_page.add(&group);
+        scrolled.set_child(Some(&preferences_page));
+        toolbar_view.set_content(Some(&scrolled));
+
+        let load_btn = gtk::Button::builder()
+            .label(gettext("Load Danmaku"))
+            .css_classes(["suggested-action"])
+            .halign(gtk::Align::Center)
+            .margin_top(6)
+            .margin_bottom(6)
+            .build();
+
+        let btn_box = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+        btn_box.set_halign(gtk::Align::Center);
+        btn_box.append(&load_btn);
+        toolbar_view.add_bottom_bar(&btn_box);
+        dialog.set_child(Some(&toolbar_view));
+
+        let css_provider = gtk::CssProvider::new();
+        css_provider.load_from_string(
+            ".danmaku-episode-selected { background-color: alpha(@accent_bg_color, 0.15); }"
+        );
+        gtk::style_context_add_provider_for_display(
+            &gtk::gdk::Display::default().unwrap(),
+            &css_provider,
+            gtk::STYLE_PROVIDER_PRIORITY_APPLICATION,
+        );
+
+        let obj = self.clone();
+        load_btn.connect_clicked(glib::clone!(
+            #[weak(rename_to = obj)]
+            obj,
+            #[weak]
+            dialog,
+            move |_| {
+                if let Some(episode_id) = selected_episode_id.get() {
+                    dialog.close();
+                    spawn(glib::clone!(
+                        #[weak(rename_to = obj)]
+                        obj,
+                        async move {
+                            match obj.request_danmaku(episode_id).await {
+                                Ok(danmaku) => {
+                                    obj.imp().danmaku_page.set_description(&format!(
+                                        "{} {}",
+                                        danmaku.len(),
+                                        gettext("Danmaku Loaded")
+                                    ));
+                                    obj.imp().init_danmaku(danmaku, time_milis);
+                                }
+                                Err(e) => {
+                                    tracing::error!("Danmaku load error: {e}");
+                                    obj.toast(gettext("Failed to load danmaku"));
+                                }
+                            }
+                        }
+                    ));
+                }
+            }
+        ));
+
+        if let Some(window) = self.root().and_downcast::<gtk::Window>() {
+            dialog.present(Some(&window));
+        }
+    }
+
+    #[template_callback]
+    pub fn on_danmaku_appid_changed(&self, _entry: &adw::EntryRow) {
+        self.auto_save_danmaku_credentials();
+    }
+
+    #[template_callback]
+    pub fn on_danmaku_appsecret_changed(&self, _entry: &adw::PasswordEntryRow) {
+        self.auto_save_danmaku_credentials();
+    }
+
+    #[template_callback]
+    pub fn on_danmaku_server_combo_changed(&self, _pspec: glib::ParamSpec) {
+        let selected = self.imp().danmaku_server_combo.selected();
+        let _ = SETTINGS.set_danmaku_active_server(danmaku_combo_to_server_index(selected));
+        self.apply_active_server();
+    }
+
+    pub fn apply_active_server(&self) {
+        apply_danmaku_active_server(SETTINGS.danmaku_active_server(), &SETTINGS.danmaku_servers());
+    }
+
+    pub fn rebuild_server_list(&self) {
+        let servers = SETTINGS.danmaku_servers();
+        let active = SETTINGS.danmaku_active_server();
+
+        // Build the combo model: [ Default, server1, server2, ... ]
+        let model =
+            gtk::StringList::new(&[gettext(crate::client::DEFAULT_DANMAKU_SERVER_LABEL).as_str()]);
+        for s in &servers {
+            model.append(&s.name);
+        }
+        self.imp()
+            .danmaku_server_combo
+            .set_model(Some(&model));
+        self.imp()
+            .danmaku_server_combo
+            .set_selected(danmaku_server_to_combo_index(active));
+    }
+
+    fn auto_save_danmaku_credentials(&self) {
+        if !SETTINGS.has_danmaku_custom_credentials_keys() {
+            self.imp().danmaku_page.set_description(&gettext(
+                "Runtime schema is outdated. Please update schema first.",
+            ));
+            return;
+        }
+
+        let appid_text = self.imp().danmaku_appid_row.text().trim().to_string();
+        let appsecret_text = self.imp().danmaku_appsecret_row.text().trim().to_string();
+        let has_appid = !appid_text.is_empty();
+        let has_appsecret = !appsecret_text.is_empty();
+
+        if has_appid ^ has_appsecret {
+            return;
+        }
+
+        if SETTINGS.set_danmaku_appid(&appid_text).is_err()
+            || SETTINGS.set_danmaku_appsecret(&appsecret_text).is_err()
+        {
+            self.imp()
+                .danmaku_page
+                .set_description(&gettext("Failed to save danmaku credentials."));
+            return;
+        }
+
+        self.imp().init_dandanapi_client();
+
+        if !self.key_vaild() {
+            self.toast(gettext("Danmaku credentials are invalid."));
+            return;
+        }
+
+        let client = self
+            .imp()
+            .danmaku_client
+            .get()
+            .cloned()
+            .unwrap_or_else(dandanapi::DanDanClient::instance);
+
+        spawn(glib::clone!(
+            #[weak(rename_to = obj)]
+            self,
+            async move {
+                let verify_result = {
+                    let route = client.route(dandanapi::Episodes(dandanapi::RequestEpisodes {
+                        anime: "CredentialCheck".to_string(),
+                        episode: "1".to_string(),
+                        tmdb_id: None,
+                    }));
+                    spawn_tokio(async move {
+                        route.await?;
+                        Ok::<(), anyhow::Error>(())
+                    })
+                    .await
+                };
+
+                match verify_result {
+                    Ok(()) => {
+                        obj.toast(gettext("Danmaku credentials saved and verified."));
+                    }
+                    Err(_) => {
+                        obj.set_key_vaild(false);
+                        obj.toast(gettext(
+                            "Danmaku credentials are invalid (or network is unavailable).",
+                        ));
+                    }
+                }
+            }
+        ));
+
+        if self.key_vaild() && SETTINGS.is_danmaku_enabled() {
+            spawn(glib::clone!(
+                #[weak(rename_to = obj)]
+                self,
+                async move {
+                    obj.load_danmaku().await;
+                }
+            ));
+        }
+    }
+
     pub fn notify_has_chapters(&self, has_chapters: bool) {
         #[cfg(target_os = "linux")]
         self.notify_mpris_has_chapters(has_chapters);
@@ -1363,47 +2256,29 @@ impl MPVPage {
 pub async fn direct_stream_url(source: &MediaSource) -> Option<String> {
     let container = source.container.as_deref()?;
     JELLYFIN_CLIENT
-        .get_item_stream_url(
-            container,
-            source.item_id.as_ref().unwrap_or(&source.id),
-            &source.id,
-        )
+        .get_item_stream_url(container, source.id.as_str(), &source.id.to_owned())
         .await
         .ok()
 }
 
-fn playable_media_source_path(source: &MediaSource) -> Option<String> {
-    let path = source.path.as_deref()?;
-
-    if path.starts_with("http://") || path.starts_with("https://") {
-        return Some(path.to_owned());
-    }
-
-    None
-}
-
-fn media_source_play_method(source: &MediaSource) -> &'static str {
-    if source.direct_stream_url.is_some() {
-        return "DirectStream";
-    }
-    if source.transcoding_url.is_some() {
-        return "Transcode";
-    }
-    "DirectPlay"
-}
-
 pub async fn media_source_stream_url(source: &MediaSource) -> Option<String> {
-    if let Some(direct_url) = source.direct_stream_url.to_owned() {
-        return Some(direct_url);
-    }
+    let container = source.container.to_owned()?;
+    let etag = source.etag.to_owned()?;
+    JELLYFIN_CLIENT
+            .get_item_stream_url(&container, &source.id.to_owned(), &etag)
+            .await
+            .ok()
+}
 
-    if let Some(transcoding_url) = source.transcoding_url.to_owned() {
-        return Some(transcoding_url);
+pub async fn extract_url(source: &MediaSource) -> Option<String> {
+    if let Some(path) = &source.direct_stream_url {
+        return Some(JELLYFIN_CLIENT.get_streaming_url(path).await);
     }
-
-    if let Some(path) = playable_media_source_path(source) {
-        return Some(path);
+    if let Some(path) = &source.transcoding_url {
+        return Some(JELLYFIN_CLIENT.get_streaming_url(path).await);
     }
-
+    if let Some(url) = media_source_stream_url(source).await {
+        return Some(url);
+    }
     direct_stream_url(source).await
 }

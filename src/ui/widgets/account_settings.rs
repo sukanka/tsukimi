@@ -2,7 +2,13 @@
 
 use super::utils::GlobalToast;
 use crate::{
-    client::jellyfin_client::JELLYFIN_CLIENT,
+    client::{
+        apply_danmaku_active_server,
+        danmaku_combo_to_server_index,
+        danmaku_server_to_combo_index,
+        jellyfin_client::JELLYFIN_CLIENT,
+        DanmakuServer,
+    },
     ui::{
         models::{
             SETTINGS,
@@ -126,6 +132,19 @@ mod imp {
         #[template_child]
         pub folder_button_content: TemplateChild<adw::ButtonContent>,
 
+        #[template_child]
+        pub settings_danmaku_server_combo: TemplateChild<adw::ComboRow>,
+        #[template_child]
+        pub settings_danmaku_server_mgr_row: TemplateChild<adw::ExpanderRow>,
+        #[template_child]
+        pub settings_danmaku_server_name_row: TemplateChild<adw::EntryRow>,
+        #[template_child]
+        pub settings_danmaku_server_url_row: TemplateChild<adw::EntryRow>,
+        #[template_child]
+        pub settings_danmaku_server_add_btn: TemplateChild<adw::ButtonRow>,
+        #[template_child]
+        pub settings_danmaku_server_remove_btn: TemplateChild<adw::ButtonRow>,
+
         pub now_editing_descriptor: RefCell<Option<Descriptor>>,
 
         pub descriptor_grab_x: Cell<f64>,
@@ -194,6 +213,7 @@ mod imp {
             obj.set_color();
             obj.bind_settings();
             obj.refersh_descriptors();
+            obj.rebuild_danmaku_server_list();
         }
     }
 
@@ -735,5 +755,110 @@ impl AccountSettings {
 
             group.append(&row);
         }
+    }
+
+    fn apply_danmaku_active_server(&self) {
+        apply_danmaku_active_server(SETTINGS.danmaku_active_server(), &SETTINGS.danmaku_servers());
+    }
+
+    fn rebuild_danmaku_server_list(&self) {
+        let servers = SETTINGS.danmaku_servers();
+        let active = SETTINGS.danmaku_active_server();
+
+        let model =
+            gtk::StringList::new(&[gettext(crate::client::DEFAULT_DANMAKU_SERVER_LABEL).as_str()]);
+        for s in &servers {
+            model.append(&s.name);
+        }
+        self.imp()
+            .settings_danmaku_server_combo
+            .set_model(Some(&model));
+        self.imp()
+            .settings_danmaku_server_combo
+            .set_selected(danmaku_server_to_combo_index(active));
+        self.imp()
+            .settings_danmaku_server_remove_btn
+            .set_visible(active >= 0);
+    }
+
+    fn fill_danmaku_server_fields(&self) {
+        let active = SETTINGS.danmaku_active_server();
+        let servers = SETTINGS.danmaku_servers();
+        if active >= 0 && (active as usize) < servers.len() {
+            let s = &servers[active as usize];
+            self.imp().settings_danmaku_server_name_row.set_text(&s.name);
+            self.imp().settings_danmaku_server_url_row.set_text(&s.url);
+            self.imp().settings_danmaku_server_add_btn.set_title(&gettext("Update"));
+            self.imp().settings_danmaku_server_add_btn.set_start_icon_name(Some("document-edit-symbolic"));
+            self.imp().settings_danmaku_server_mgr_row.set_title(&gettext("Edit Custom Server"));
+        } else {
+            self.imp().settings_danmaku_server_name_row.set_text("");
+            self.imp().settings_danmaku_server_url_row.set_text("");
+            self.imp().settings_danmaku_server_add_btn.set_title(&gettext("Add"));
+            self.imp().settings_danmaku_server_add_btn.set_start_icon_name(Some("list-add-symbolic"));
+            self.imp().settings_danmaku_server_mgr_row.set_title(&gettext("Add Custom Server"));
+        }
+    }
+
+    #[template_callback]
+    fn on_settings_danmaku_server_combo_changed(&self, _pspec: glib::ParamSpec) {
+        let active = danmaku_combo_to_server_index(self.imp().settings_danmaku_server_combo.selected());
+        let _ = SETTINGS.set_danmaku_active_server(active);
+        self.apply_danmaku_active_server();
+        self.imp()
+            .settings_danmaku_server_remove_btn
+            .set_visible(active >= 0);
+        self.fill_danmaku_server_fields();
+    }
+
+    #[template_callback]
+    fn on_settings_danmaku_server_add_clicked(&self) {
+        let name = self.imp().settings_danmaku_server_name_row.text().trim().to_string();
+        let url = self.imp().settings_danmaku_server_url_row.text().trim().to_string();
+        if name.is_empty() || url.is_empty() {
+            self.toast(gettext("Please fill in both name and URL."));
+            return;
+        }
+        let new_server = DanmakuServer { name, url };
+
+        let active = SETTINGS.danmaku_active_server();
+        let servers = SETTINGS.danmaku_servers();
+        if active >= 0 && (active as usize) < servers.len() {
+            let old = &servers[active as usize];
+            if old == &new_server {
+                self.toast(gettext("No changes detected."));
+                return;
+            }
+            if SETTINGS.edit_danmaku_server(old, new_server).is_err() {
+                self.toast(gettext("Failed to update server."));
+                return;
+            }
+        } else {
+            if SETTINGS.add_danmaku_server(new_server).is_err() {
+                self.toast(gettext("Failed to save server."));
+                return;
+            }
+        }
+        self.rebuild_danmaku_server_list();
+        self.fill_danmaku_server_fields();
+        self.apply_danmaku_active_server();
+    }
+
+    #[template_callback]
+    fn on_settings_danmaku_server_remove_clicked(&self) {
+        let active = SETTINGS.danmaku_active_server();
+        let servers = SETTINGS.danmaku_servers();
+        if active < 0 || active as usize >= servers.len() {
+            return;
+        }
+        let server = servers[active as usize].clone();
+        let _ = SETTINGS.remove_danmaku_server(&server);
+        if SETTINGS.danmaku_servers().is_empty() {
+            let _ = SETTINGS.set_danmaku_active_server(-1);
+        } else {
+            let _ = SETTINGS.set_danmaku_active_server(0);
+        }
+        self.rebuild_danmaku_server_list();
+        self.apply_danmaku_active_server();
     }
 }

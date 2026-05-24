@@ -32,12 +32,12 @@ use crate::{
     CLIENT_ID,
     gstl::player::imp::ListRepeatMode,
     ui::mpv::page::MPVPage,
-    utils::spawn,
+    utils::{
+        get_image_with_cache,
+        spawn,
+    },
 };
-use tracing::{
-    info,
-    warn,
-};
+use tracing::warn;
 
 impl MPVPage {
     pub async fn initialize_mpris(&self, app_id: &str) -> Result<()> {
@@ -55,40 +55,53 @@ impl MPVPage {
     }
 
     pub fn mpris_properties_changed(&self, property: impl IntoIterator<Item = Property> + 'static) {
+        #[cfg(target_os = "linux")]
+        let will_init = self.mpris_server().is_none()
+            && !self.imp().mpris_initializing.replace(true);
+        #[cfg(not(target_os = "linux"))]
+        let will_init = false;
+
         spawn(glib::clone!(
             #[weak(rename_to=imp)]
             self,
             async move {
-                match imp.mpris_server() {
-                    Some(server) => {
-                        if let Err(err) = server.properties_changed(property).await {
-                            warn!("Failed to emit properties changed: {}", err);
-                        }
+                if will_init {
+                    let app_id = format!("{}.{}", APP_ID, "mpv");
+                    if let Err(e) = imp.initialize_mpris(&app_id).await {
+                        warn!("Failed to initialize mpris server: {}", e);
                     }
-                    None => {
-                        info!("Failed to get MPRIS server.");
+                    #[cfg(target_os = "linux")]
+                    imp.imp().mpris_initializing.set(false);
+                }
+                // If another future is still initializing, wait for it
+                // so we don't drop this property change.
+                let server = loop {
+                    if let Some(server) = imp.mpris_server() {
+                        break server;
                     }
+                    glib::timeout_future(std::time::Duration::from_millis(10)).await;
+                };
+                if let Err(err) = server.properties_changed(property).await {
+                    warn!("Failed to emit properties changed: {}", err);
                 }
             }
         ));
     }
 
     pub fn notify_mpris_seeked(&self, position: i64) {
+        if position <= 0 {
+            return;
+        }
         spawn(glib::clone!(
             #[weak(rename_to=obj)]
             self,
             async move {
-                match obj.mpris_server() {
-                    Some(server) => {
-                        let signal = Signal::Seeked {
-                            position: Time::from_millis(position),
-                        };
-                        if let Err(err) = server.emit(signal).await {
-                            warn!("Failed to emit mpris_seeked: {}", err);
-                        }
-                    }
-                    None => {
-                        info!("Failed to get MPRIS server.");
+                if let Some(server) = obj.mpris_server() {
+                    let signal = Signal::Seeked {
+                        position: Time::from_millis(position),
+                    };
+                    if let Err(err) = server.emit(signal).await {
+                        warn!("Failed to emit mpris_seeked: {}", err);
                     }
                 }
             }
@@ -103,6 +116,9 @@ impl MPVPage {
             Property::CanSeek(true),
             Property::PlaybackStatus(PlaybackStatus::Playing),
         ]);
+        self.notify_mpris_art_changed();
+        let position = self.imp().video.position();
+        self.notify_mpris_seeked((position * 1000.0) as i64);
     }
 
     pub fn notify_mpris_paused(&self) {
@@ -136,7 +152,54 @@ impl MPVPage {
         ]);
     }
 
-    pub fn notify_mpris_art_changed(&self) {}
+    pub fn notify_mpris_art_changed(&self) {
+        let mut metadata = self.metadata().clone();
+        spawn(glib::clone!(
+            #[weak(rename_to = imp)]
+            self.imp(),
+            #[weak(rename_to = obj)]
+            self,
+            async move {
+                if let Some(video) = obj.current_video().as_ref() {
+                    // Try episode cover → season cover → poster/backdrop
+                    let fallbacks: Vec<(String, &str)> = {
+                        let mut v = Vec::new();
+                        if let Some(id) = video.primary_image_item_id() {
+                            v.push((id, "Primary"));
+                        }
+                        if let Some(id) = video.season_id() {
+                            v.push((id, "Primary"));
+                        }
+                        if let Some(id) = video.series_id() {
+                            v.push((id, "Backdrop"));
+                        }
+                        if let Some(id) = video.parent_backdrop_item_id() {
+                            v.push((id, "Backdrop"));
+                        }
+                        if let Some(id) = video.parent_thumb_item_id() {
+                            v.push((id, "Thumb"));
+                        }
+                        v.push((video.id(), "Backdrop"));
+                        v.push((video.id(), "Primary"));
+                        v
+                    };
+
+                    for (id, img_type) in &fallbacks {
+                        if let Ok(path) = get_image_with_cache(id.clone(), img_type.to_string(), None).await {
+                            if !path.is_empty() {
+                                let url = format!("file://{}", path);
+                                imp.cached_art_url.replace(Some(url.clone()));
+                                imp.cached_art_id.replace(video.id());
+                                metadata.set_art_url(Some(url));
+                                obj.mpris_properties_changed([Property::Metadata(metadata)]);
+                                return;
+                            }
+                        }
+                    }
+                }
+            }
+        ));
+    }
 
     pub fn metadata(&self) -> Metadata {
         self.imp()
@@ -144,7 +207,25 @@ impl MPVPage {
             .current_video()
             .as_ref()
             .map_or_else(Metadata::new, |video| {
-                Metadata::builder().title(video.name()).build()
+                let mut builder = Metadata::builder()
+                    .title(video.name())
+                    .length(Time::from_secs(
+                        (video.run_time_ticks() / 10_000_000) as i64,
+                    ));
+                if let Some(artists) = video.artists() {
+                    builder = builder.artist([artists]);
+                }
+                if let Some(album) = video.album_id() {
+                    builder = builder.album(album);
+                }
+                // Use cached art URL if it matches the current video
+                let imp = self.imp();
+                if imp.cached_art_id.borrow().as_str() == video.id().as_str() {
+                    if let Some(url) = imp.cached_art_url.borrow().as_ref() {
+                        builder = builder.art_url(url.clone());
+                    }
+                }
+                builder.build()
             })
     }
 }
@@ -238,11 +319,7 @@ impl LocalPlayerInterface for MPVPage {
     }
 
     async fn seek(&self, offset: Time) -> fdo::Result<()> {
-        if offset.is_positive() {
-            self.imp().video.seek_forward(offset.as_secs());
-        } else {
-            self.imp().video.seek_backward(offset.as_secs());
-        }
+        self.imp().video.seek_forward(offset.as_secs());
         Ok(())
     }
 

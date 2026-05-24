@@ -56,6 +56,8 @@ libmpv2 = "4.1.0"
 glow = "0.17"
 xxhash-rust = { version = "0.8.15", features = ["xxh3"] }
 futures-util = "0.3.31"
+danmakw = { git = "https://github.com/sukanka/danmakw.git", branch = "fix-jitter"}
+dandanapi = { git = "https://github.com/sukanka/dandanapi.git" }
 
 [dev-dependencies]
 cargo-husky = { version = "1", default-features = false, features = ["user-hooks"] }
@@ -100,3 +102,7 @@ codegen-units = 1
 
 [profile.dev]
 debug = true
+
+
+[patch."https://github.com/tsukinaha/glyphon.git"]
+glyphon = { git="https://github.com/sukanka/glyphon.git", branch = "fix-pad"}

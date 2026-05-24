@@ -80,8 +80,9 @@
       </object>
     </child>
     <child>
-      <object class="AdwBreakpoint" id="sidebar_breakpoint">
+      <object class="AdwBreakpoint">
         <condition>max-width: 500sp</condition>
+        <setter object="split_view" property="collapsed">True</setter>
         <setter object="mpv_view" property="show-sidebar">False</setter>
       </object>
     </child>
@@ -205,6 +206,13 @@
                                             <property name="icon-name">system-log-out-symbolic</property>
                                             <property name="tooltip-text" translatable="yes">Log Out</property>
                                             <property name="action-name">win.relogin</property>
+                                          </object>
+                                        </child>
+                                        <child type="end">
+                                          <object class="GtkMenuButton" id="route_switch_button">
+                                            <property name="visible">false</property>
+                                            <property name="icon-name">network-transmit-receive-symbolic</property>
+                                            <property name="tooltip-text" translatable="yes">Switch Route</property>
                                           </object>
                                         </child>
                                       </object>
