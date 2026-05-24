@@ -197,6 +197,8 @@ pub mod imp {
         tagline: RefCell<Option<String>>,
         #[property(get, set, nullable)]
         path: RefCell<Option<String>>,
+        #[property(get, set, nullable)]
+        date_created: RefCell<Option<glib::DateTime>>,
         #[property(get, set)]
         playback_position_ticks: RefCell<u64>,
     }

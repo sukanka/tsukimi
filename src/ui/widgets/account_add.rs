@@ -150,7 +150,7 @@ impl AccountWindow {
 
         let server = format!("{protocol}{server}");
 
-        let _ = JELLYFIN_CLIENT.header_change_url(&server, &port);
+        let _ = JELLYFIN_CLIENT.header_change_url(&server, &port, None);
         let _ = JELLYFIN_CLIENT.header_change_token(&servername);
         let un = username.to_string();
         let pw = password.to_string();
@@ -193,6 +193,10 @@ impl AccountWindow {
             user_id: res.user.id,
             access_token: res.access_token,
             server_type: Some(server_type),
+            path: None,
+            route_name: None,
+            routes: Vec::new(),
+            active_route: None,
         };
 
         let action_type = imp.action_type.get();

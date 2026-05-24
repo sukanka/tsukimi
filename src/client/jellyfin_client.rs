@@ -174,10 +174,14 @@ impl JellyfinClient {
 
     pub async fn init(&self, account: &Account) -> Result<(), Box<dyn std::error::Error>> {
         let url = {
-            let mut url = Url::parse(&account.server)?;
-            url.set_port(Some(account.port.parse::<u16>().unwrap_or_default()))
+            let mut url = Url::parse(account.active_server())?;
+            url.set_port(Some(account.active_port().parse::<u16>().unwrap_or_default()))
                 .map_err(|_| anyhow!("Failed to set port"))?;
-            url.join("emby/")?
+            let joined = match account.active_path().map(|p| p.trim().trim_matches('/')).filter(|p| !p.is_empty()) {
+                Some(p) => format!("{p}/emby/"),
+                None => "emby/".to_string(),
+            };
+            url.join(&joined)?
         };
 
         let mut headers = reqwest::header::HeaderMap::new();
@@ -218,11 +222,15 @@ impl JellyfinClient {
         Ok(())
     }
 
-    pub fn header_change_url(&self, url_str: &str, port: &str) -> Result<()> {
+    pub fn header_change_url(&self, url_str: &str, port: &str, path: Option<&str>) -> Result<()> {
         let mut url = Url::parse(url_str)?;
         url.set_port(Some(port.parse::<u16>().unwrap_or_default()))
             .map_err(|_| anyhow!("Failed to set port"))?;
-        let url = url.join("emby/")?;
+        let joined = match path.map(|p| p.trim().trim_matches('/')).filter(|p| !p.is_empty()) {
+            Some(p) => format!("{p}/emby/"),
+            None => "emby/".to_string(),
+        };
+        let url = url.join(&joined)?;
         self.session.rcu(|current| {
             let mut session = (**current).clone();
             session.url = Some(url.clone());
@@ -422,7 +430,7 @@ impl JellyfinClient {
         let params = [
             (
                 "Fields",
-                "Overview,PrimaryImageAspectRatio,PremiereDate,ProductionYear,SyncStatus",
+                "Overview,PrimaryImageAspectRatio,PremiereDate,ProductionYear,SyncStatus,DateCreated",
             ),
             ("Limit", "50"),
             ("StartIndex", &start_index.to_string()),
@@ -439,7 +447,7 @@ impl JellyfinClient {
         let params = [
             (
                 "Fields",
-                "Overview,PrimaryImageAspectRatio,PremiereDate,ProductionYear,SyncStatus",
+                "Overview,PrimaryImageAspectRatio,PremiereDate,ProductionYear,SyncStatus,DateCreated",
             ),
             ("ImageTypeLimit", "1"),
             ("SeasonId", season_id),
@@ -1431,7 +1439,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_upload_image() {
-        let _ = JELLYFIN_CLIENT.header_change_url("http://127.0.0.1", "8096");
+        let _ = JELLYFIN_CLIENT.header_change_url("http://127.0.0.1", "8096", None);
         let result = JELLYFIN_CLIENT.login("inaha", "").await;
         match result {
             Ok(response) => {
