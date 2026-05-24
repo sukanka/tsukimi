@@ -28,7 +28,6 @@ mod imp {
 
     use crate::{
         ui::{
-            SETTINGS,
             mpv::{
                 control_sidebar::MPVControlSidebar,
                 page::MPVPage,
@@ -117,6 +116,9 @@ mod imp {
         #[template_child]
         pub avatar: TemplateChild<adw::Avatar>,
 
+        #[template_child]
+        pub route_switch_button: TemplateChild<gtk::MenuButton>,
+
         pub progress_bar_animation: OnceCell<adw::TimedAnimation>,
         pub progress_bar_fade_animation: OnceCell<adw::TimedAnimation>,
 
@@ -125,9 +127,6 @@ mod imp {
         pub mpv_playlist_selection: gtk::SingleSelection,
 
         pub suspend_cookie: RefCell<Option<u32>>,
-
-        #[template_child]
-        pub sidebar_breakpoint: TemplateChild<adw::Breakpoint>,
     }
 
     #[glib::object_subclass]
@@ -177,6 +176,16 @@ mod imp {
             klass.install_action("win.add-server", None, |obj, _, _| {
                 obj.new_account();
             });
+            klass.install_action(
+                "win.switch-route",
+                Some(&i32::static_variant_type()),
+                |obj, _, parameter| {
+                    let index = parameter
+                        .and_then(|p| p.get::<i32>())
+                        .unwrap_or(-1);
+                    obj.switch_route(index);
+                },
+            );
         }
 
         fn instance_init(obj: &InitializingObject<Self>) {
@@ -200,23 +209,6 @@ mod imp {
                 .set_player(Some(&self.mpvnav.imp().video.get()));
 
             let obj = self.obj();
-
-            self.sidebar_breakpoint.connect_apply(glib::clone!(
-                #[weak]
-                obj,
-                move |_breakpoint| {
-                    obj.imp().split_view.set_collapsed(true);
-                }
-            ));
-            self.sidebar_breakpoint.connect_unapply(glib::clone!(
-                #[weak]
-                obj,
-                move |_breakpoint| {
-                    if !SETTINGS.is_overlay() {
-                        obj.imp().split_view.set_collapsed(false);
-                    }
-                }
-            ));
 
             obj.bind_about_action();
 
@@ -363,13 +355,14 @@ impl Window {
 
         imp.popbutton.set_visible(false);
         imp.navipage.set_title("");
-        self.refresh_homepage_if_needed();
-    }
-
-    pub fn now_page_tag(&self) -> Option<String> {
-        let now_page = self.imp().mainview.visible_page()?;
-
-        now_page.tag().map(|s| s.to_string())
+        if imp.insidestack.visible_child_name() == Some("homepage".into()) && SETTINGS.is_refresh()
+        {
+            let binding = imp.homepage.child();
+            let Some(homepage) = binding.and_downcast_ref::<HomePage>() else {
+                return;
+            };
+            homepage.update(false);
+        }
     }
 
     pub async fn set_servers(&self) {
@@ -528,9 +521,67 @@ impl Window {
 
     pub async fn account_setup(&self) {
         let imp = self.imp();
-        let s = JELLYFIN_CLIENT.session();
-        imp.namerow.set_title(&s.account.username);
-        imp.namerow.set_subtitle(&s.account.servername);
+        imp.namerow
+            .set_title(&JELLYFIN_CLIENT.session().account.username);
+        imp.namerow
+            .set_subtitle(&JELLYFIN_CLIENT.session().account.servername);
+        self.update_route_switcher();
+    }
+
+    fn current_account(&self) -> Option<Account> {
+        crate::ui::widgets::route_switcher::current_account()
+    }
+
+    pub fn update_route_switcher(&self) {
+        let button = self.imp().route_switch_button.get();
+        crate::ui::widgets::route_switcher::refresh_route_switch_button(
+            &button,
+            self.current_account().as_ref(),
+        );
+
+        // Route switch removed from mpv page
+    }
+
+    pub fn switch_route(&self, index: i32) {
+        let Some(old_account) = self.current_account() else {
+            return;
+        };
+
+        let new_active = if index < 0 {
+            None
+        } else {
+            let i = index as usize;
+            if i >= old_account.routes.len() {
+                return;
+            }
+            Some(i)
+        };
+
+        if old_account.active_route == new_active {
+            return;
+        }
+
+        let mut new_account = old_account.clone();
+        new_account.active_route = new_active;
+
+        if let Err(e) = SETTINGS.edit_account(old_account.clone(), new_account.clone()) {
+            self.toast(format!("{}: {}", gettext("Failed to save account"), e));
+            return;
+        }
+
+        spawn(glib::clone!(
+            #[weak(rename_to = obj)]
+            self,
+            async move {
+                if let Err(e) = JELLYFIN_CLIENT.init(&new_account).await {
+                    obj.toast(format!("{}: {}", gettext("Failed to switch route"), e));
+                    let _ = JELLYFIN_CLIENT.init(&old_account).await;
+                    return;
+                }
+
+                obj.reset();
+            }
+        ));
     }
 
     pub fn account_settings(&self) {
@@ -586,14 +637,6 @@ impl Window {
 
     pub fn mainpage(&self) {
         self.imp().stack.set_visible_child_name("main");
-    }
-
-    pub fn refresh_homepage_if_needed(&self) {
-        if self.now_page_tag() == Some("mainpage".into()) && SETTINGS.is_refresh() {
-            if let Some(homepage) = self.imp().homepage.child().and_downcast_ref::<HomePage>() {
-                homepage.update(false);
-            }
-        }
     }
 
     fn placeholder(&self) {
@@ -772,14 +815,13 @@ impl Window {
 
     pub fn play_media(
         &self, selected: Option<SelectedVideoSubInfo>, item: TuItem, episode_list: Vec<TuItem>,
-        matcher: Option<String>, start_seconds: f64,
+        matcher: Option<String>, per: f64,
     ) {
         let imp = self.imp();
         imp.stack.set_visible_child_name("mpv");
         self.prevent_suspend();
         self.set_mpv_playlist(&episode_list);
-        imp.mpvnav
-            .play(selected, item, episode_list, matcher, start_seconds);
+        imp.mpvnav.play(selected, item, episode_list, matcher, per);
     }
 
     pub fn push_page<T>(&self, page: &T, tag: &str, name: &str)
@@ -1052,7 +1094,7 @@ impl Window {
             .activate(|window, _, _| {
                 let about = adw::AboutDialog::builder()
                     .application_name("Tsukimi")
-                    .version(crate::config::version())
+                    .version(crate::config::VERSION)
                     .comments("A simple third-party Jellyfin client.")
                     // TRANSLATORS: 'Name <email@domain.com>' or 'Name https://website.example'
                     .translator_credits(gettext("translator-credits"))
@@ -1062,7 +1104,7 @@ impl Window {
                     .build();
                 about.set_debug_info(&format!(
                     "Version: {}\nArchitecture: {}\nGTK Version: {}.{}.{}\nADW Version: {}.{}.{}\nOS: {}\n",
-                    crate::config::version(),
+                    crate::config::VERSION,
                     std::env::consts::ARCH,
                     gtk::major_version(),
                     gtk::minor_version(),
