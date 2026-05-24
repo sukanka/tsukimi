@@ -868,6 +868,12 @@ impl MPVPage {
 
                 if SETTINGS.is_danmaku_enabled() {
                     imp.pause_danmaku();
+                    imp.danmaku_list.replace(None);
+                    if is_libmpv() {
+                        imp.danmaku_area.clear_danmaku();
+                    } else {
+                        imp.remove_danmaku_ass();
+                    }
                     obj.load_danmaku().await;
                 } else {
                     imp.danmaku_list.replace(None);
