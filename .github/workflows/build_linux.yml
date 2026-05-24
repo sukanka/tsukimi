@@ -71,8 +71,8 @@ jobs:
 
       - name: Upload artifact
         uses: actions/upload-artifact@v7
-        retention-days: 30
         with:
+          retention-days: 30
           name: tsukimi-${{ matrix.platform }}-linux
           path: tsukimi-${{ matrix.platform }}-linux.tar.gz
           archive: false

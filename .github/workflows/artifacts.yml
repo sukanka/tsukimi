@@ -7,57 +7,57 @@ permissions:
   contents: write
 
 jobs:
-    telegram:
-      name: Upload
-      runs-on: ubuntu-latest
-      services:
-        docker:
-          image: aiogram/telegram-bot-api:latest
-          env:
-            TELEGRAM_API_ID: ${{ secrets.TELEGRAM_API_ID }}
-            TELEGRAM_API_HASH: ${{ secrets.TELEGRAM_API_HASH }}
-          ports:
-            - 8081:8081
-          
-      steps:
-        - name: Download artifact
-          uses: actions/download-artifact@v8
-          with:
-            skip-decompress: true
-            path: artifacts
-            merge-multiple: true
+  telegram:
+    name: Upload
+    runs-on: ubuntu-latest
+    services:
+      docker:
+        image: aiogram/telegram-bot-api:latest
+        env:
+          TELEGRAM_API_ID: ${{ secrets.TELEGRAM_API_ID }}
+          TELEGRAM_API_HASH: ${{ secrets.TELEGRAM_API_HASH }}
+        ports:
+          - 8081:8081
 
-        - name: Upload to Telegram
-          uses: MutsukiC/telegram-files@v1
-          with:
-            api-url: "http://localhost:8081"
-            token: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-            chat-id: ${{ secrets.TELEGRAM_CHAT_ID }}
-            files: artifacts/*
-            body: |
-              Tsukimi CI
-              Commit Message: ${{ github.event.head_commit.message}}
-              Commit URL: ${{ github.event.head_commit.url }}
-              Branch: ${{ github.ref }}
+    steps:
+      - name: Download artifact
+        uses: actions/download-artifact@v8
+        with:
+          skip-decompress: true
+          path: artifacts
+          merge-multiple: true
 
-    release:
-      name: Release
-      runs-on: ubuntu-latest
-      if: github.ref_type == 'tag'
-      steps:
-        - name: Download artifact
-          uses: actions/download-artifact@v8
-          with:
-            pattern: "*-linux"
-            path: artifacts
-            skip-decompress: true
-            merge-multiple: true
-        
-        - name: Create release
-          uses: softprops/action-gh-release@v3
-          with:
-            files: artifacts/*
-            prerelease: ${{ github.ref_type == 'tag' && contains(github.ref_name, 'rc') }}
+      - name: Upload to Telegram
+        uses: MutsukiC/telegram-files@v1
+        with:
+          api-url: "http://localhost:8081"
+          token: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          chat-id: ${{ secrets.TELEGRAM_CHAT_ID }}
+          files: artifacts/*
+          body: |
+            Tsukimi CI
+            Commit Message: ${{ github.event.head_commit.message}}
+            Commit URL: ${{ github.event.head_commit.url }}
+            Branch: ${{ github.ref }}
+
+  release:
+    name: Release
+    runs-on: ubuntu-latest
+    if: github.ref_type == 'tag'
+    steps:
+      - name: Download artifact
+        uses: actions/download-artifact@v8
+        with:
+          pattern: "*-linux"
+          path: artifacts
+          skip-decompress: true
+          merge-multiple: true
+
+      - name: Create release
+        uses: softprops/action-gh-release@v3
+        with:
+          files: artifacts/*
+          prerelease: ${{ github.ref_type == 'tag' && contains(github.ref_name, 'rc') }}
 
   nightly:
     name: Nightly Release
