@@ -377,7 +377,7 @@ impl LocalPlayerInterface for MPVPage {
     }
 
     async fn position(&self) -> fdo::Result<Time> {
-        let position = Time::from_micros(self.imp().video.position() as i64);
+        let position = Time::from_micros((self.imp().video.position() * 1_000_000.0) as i64);
         Ok(position)
     }
 

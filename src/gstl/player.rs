@@ -350,16 +350,10 @@ pub mod imp {
         }
 
         pub fn get_position(&self) -> gst::ClockTime {
-            if self.pipeline().current_state() != gst::State::Playing {
-                return gst::ClockTime::from_mseconds(0);
-            }
             let pipeline = &self.pipeline();
-            let position = pipeline.query_position::<gst::ClockTime>();
-            if let Some(position) = position {
-                position
-            } else {
-                gst::ClockTime::from_seconds(0)
-            }
+            pipeline
+                .query_position::<gst::ClockTime>()
+                .unwrap_or_else(|| gst::ClockTime::from_seconds(0))
         }
 
         pub fn position(&self) -> f64 {
