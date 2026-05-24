@@ -1051,9 +1051,10 @@ impl MPVPage {
                             obj.update_seeking(false);
                         }
                         ListenEvent::PlaybackRestart => {
-                            obj.imp().resume_danmaku();
                             obj.update_seeking(false);
                             let position = obj.imp().video.position();
+                            obj.imp().danmaku_area.seek(position * 1000.0);
+                            obj.imp().resume_danmaku();
                             obj.notify_seeked((position * 1000.0) as i64);
                         }
                         ListenEvent::Eof(value) => {
