@@ -159,6 +159,8 @@ pub(crate) mod imp {
         #[template_child]
         pub subdropdown: TemplateChild<gtk::DropDown>,
         #[template_child]
+        pub route_switch_button: TemplateChild<gtk::MenuButton>,
+        #[template_child]
         pub carousel: TemplateChild<ItemCarousel>,
         #[template_child]
         pub actionbox: TemplateChild<ItemActionsBox>,
@@ -260,6 +262,11 @@ pub(crate) mod imp {
             namedropdown.set_list_factory(Some(&factory::<false>()));
             subdropdown.set_factory(Some(&factory::<true>()));
             subdropdown.set_list_factory(Some(&factory::<false>()));
+
+            crate::ui::widgets::route_switcher::refresh_route_switch_button(
+                &self.route_switch_button.get(),
+                crate::ui::widgets::route_switcher::current_account().as_ref(),
+            );
 
             let store = gtk::gio::ListStore::new::<TuObject>();
             self.selection.set_model(Some(&store));
