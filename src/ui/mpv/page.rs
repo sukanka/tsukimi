@@ -762,7 +762,7 @@ impl MPVPage {
                 let id_clone = id.to_owned();
                 let playback_info = match spawn_tokio(async move {
                     JELLYFIN_CLIENT
-                        .get_playbackinfo(&id_clone, sub_stream_index.map(|i| i), media_source_id, true, PlaybackDirectMode::direct())
+                        .get_playbackinfo(&id_clone, sub_stream_index,media_source_id, true, PlaybackDirectMode::direct())
                         .await
                 })
                 .await
