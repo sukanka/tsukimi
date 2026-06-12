@@ -232,6 +232,25 @@ impl MPVGLArea {
         ));
     }
 
+    /// Resume playback of an already-loaded video without re-fetching the URL.
+    /// This preserves the demuxer cache so the user doesn't need to re-buffer.
+    pub fn resume_cached(&self, start_seconds: f64) {
+        spawn(glib::clone!(
+            #[weak(rename_to = obj)]
+            self,
+            async move {
+                let mpv = &obj.imp().mpv();
+
+                mpv.event_thread_alive
+                    .store(ACTIVE, std::sync::atomic::Ordering::SeqCst);
+                atomic_wait::wake_all(&*mpv.event_thread_alive);
+
+                mpv.set_position(start_seconds);
+                mpv.pause(false);
+            }
+        ));
+    }
+
     pub fn add_sub(&self, url: &str) {
         self.imp().mpv().add_sub(url)
     }

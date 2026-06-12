@@ -22,7 +22,6 @@ use super::{
         MPV_EVENT_CHANNEL,
         MpvTrack,
         MpvTracks,
-        PAUSED,
         TrackSelection,
         TsukimiMPV,
     },
@@ -263,6 +262,11 @@ mod imp {
 
         #[property(get, set, default_value = true)]
         pub can_fade_cursor_set: Cell<bool>,
+
+        /// Tracks the ID of the video currently loaded in mpv.
+        /// When `Some(id)`, a video file is loaded and its demuxer cache is preserved.
+        /// Used to skip re-fetching the playback URL when resuming the same video.
+        pub cached_video_id: RefCell<Option<String>>,
     }
 
     #[glib::object_subclass]
@@ -480,6 +484,10 @@ impl MPVPage {
         self.imp()
             .queued_playback_direct_mode
             .replace(Some(next_mode));
+        // Clear the cached video ID since we're about to unload the file.
+        // This ensures play() takes the full-reload path rather than the
+        // fast resume path (which would fail because mpv.stop() unloaded it).
+        self.imp().cached_video_id.replace(None);
         self.mpv().stop();
 
         spawn_g_timeout(glib::clone!(
@@ -575,6 +583,21 @@ impl MPVPage {
             self,
             async move {
                 let imp = obj.imp();
+
+                // Fast path: if the same video is already loaded in mpv (cache preserved),
+                // skip the network round-trips and just seek to the desired position.
+                {
+                    let cached = imp.cached_video_id.borrow();
+                    if cached.as_deref() == Some(&id) {
+                        imp.spinner.set_visible(false);
+                        imp.loading_box.set_visible(false);
+                        imp.video.resume_cached(start_seconds);
+                        return;
+                    }
+                }
+                // Different video (or first playback): clear cached ID, full load.
+                imp.cached_video_id.replace(None);
+
                 imp.spinner.set_visible(true);
                 imp.loading_box.set_visible(true);
                 imp.network_speed_label
@@ -1120,6 +1143,10 @@ impl MPVPage {
     fn on_file_loaded(&self) {
         let imp = self.imp();
         imp.allow_fallback.set(false);
+        // Mark the newly loaded video as cached so we can resume it later
+        // without re-fetching from the network.
+        imp.cached_video_id
+            .replace(self.current_video().map(|v| v.id()));
         if let Some(suburl) = imp.suburl.borrow().as_ref() {
             imp.video.add_sub(suburl);
         }
@@ -1369,9 +1396,14 @@ impl MPVPage {
 
         let mpv = self.mpv();
         mpv.pause(true);
-        mpv.stop();
-        mpv.event_thread_alive
-            .store(PAUSED, std::sync::atomic::Ordering::SeqCst);
+        // Keep the video loaded in mpv to preserve the demuxer cache.
+        // Previously mpv.stop() was called here, which unloaded the file
+        // and discarded the entire buffer, forcing a full re-buffer on resume.
+        // Now we only pause — the cache survives until the app exits or a
+        // different video is loaded.
+        let imp = self.imp();
+        imp.cached_video_id
+            .replace(self.current_video().map(|v| v.id()));
         let root = self.root();
         let window = root
             .and_downcast_ref::<crate::ui::widgets::window::Window>()
