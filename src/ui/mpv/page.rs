@@ -493,6 +493,7 @@ impl MPVPage {
             .queued_playback_direct_mode
             .replace(Some(next_mode));
         // Clear the cached playback since we're about to unload the file.
+        self.imp().video.set_opacity(0.0);
         self.imp().cached_playback.replace(None);
         self.imp().pending_cached_playback.replace(None);
         self.mpv().stop();
@@ -544,6 +545,16 @@ impl MPVPage {
 
         let id = item.id();
         let series_id = item.series_id();
+        let switching_video = self
+            .current_video()
+            .is_some_and(|current_video| current_video.id() != id);
+        if switching_video {
+            let imp = self.imp();
+            imp.video.set_opacity(0.0);
+            imp.cached_playback.replace(None);
+            imp.pending_cached_playback.replace(None);
+            self.mpv().stop();
+        }
         self.imp().video_scale.reset_scale();
         self.imp().last_playback_position.set(start_seconds);
         self.reset_skippable_segments();
@@ -605,6 +616,7 @@ impl MPVPage {
                     .as_ref()
                     .is_some_and(|cached| cached.item_id != id);
                 if cached_item_changed {
+                    imp.video.set_opacity(0.0);
                     imp.cached_playback.replace(None);
                     imp.pending_cached_playback.replace(None);
                     obj.mpv().stop();
@@ -736,6 +748,7 @@ impl MPVPage {
                     imp.allow_fallback.set(false);
                     imp.spinner.set_visible(false);
                     imp.loading_box.set_visible(false);
+                    imp.video.set_opacity(1.0);
                     if sub_url.as_ref() != previous_sub_url.as_ref()
                         && let Some(suburl) = sub_url.as_ref()
                     {
@@ -749,6 +762,7 @@ impl MPVPage {
                 }
 
                 if imp.cached_playback.borrow().is_some() {
+                    imp.video.set_opacity(0.0);
                     imp.cached_playback.replace(None);
                     imp.pending_cached_playback.replace(None);
                     obj.mpv().stop();
@@ -1185,6 +1199,7 @@ impl MPVPage {
     fn on_file_loaded(&self) {
         let imp = self.imp();
         imp.allow_fallback.set(false);
+        imp.video.set_opacity(1.0);
         if let Some(cache_key) = imp.pending_cached_playback.take() {
             imp.cached_playback.replace(Some(cache_key));
         }
