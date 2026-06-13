@@ -710,7 +710,7 @@ impl MPVPage {
                             .and_then(|index| media_source.media_streams.get(index.0 as usize))
                     };
 
-                if let Some(slang) = selected.as_ref().map(|s| s.sub_lang.clone()) {
+                if let Some(slang) = selected.map(|s| s.sub_lang) {
                     imp.video.set_slang(slang);
                 } else {
                     imp.video
