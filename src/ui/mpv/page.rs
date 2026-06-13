@@ -452,7 +452,6 @@ impl MPVPage {
         let imp = self.imp();
         imp.allow_fallback.set(false);
         imp.pending_cached_playback.replace(None);
-        imp.cached_playback.replace(None);
         imp.loading_box.set_visible(false);
         imp.spinner.set_visible(false);
     }
@@ -712,23 +711,6 @@ impl MPVPage {
                     direct_mode,
                 };
 
-                if imp.cached_playback.borrow().as_ref() == Some(&cache_key) {
-                    imp.allow_fallback.set(false);
-                    imp.spinner.set_visible(false);
-                    imp.loading_box.set_visible(false);
-                    imp.video.resume_cached(start_seconds);
-                    obj.notify_playing();
-                    obj.update_timeout();
-                    obj.handle_callback(BackType::Start);
-                    return;
-                }
-
-                if imp.cached_playback.borrow().is_some() {
-                    imp.cached_playback.replace(None);
-                    imp.pending_cached_playback.replace(None);
-                    obj.mpv().stop();
-                }
-
                 let sub_url = match media_stream {
                     Some(stream) if stream.is_external => match &stream.delivery_url {
                         Some(url) => Some(JELLYFIN_CLIENT.get_streaming_url(url).await),
@@ -747,7 +729,30 @@ impl MPVPage {
                     _ => None,
                 };
 
-                imp.suburl.replace(sub_url);
+                let previous_sub_url = imp.suburl.borrow().clone();
+                imp.suburl.replace(sub_url.clone());
+
+                if imp.cached_playback.borrow().as_ref() == Some(&cache_key) {
+                    imp.allow_fallback.set(false);
+                    imp.spinner.set_visible(false);
+                    imp.loading_box.set_visible(false);
+                    if sub_url.as_ref() != previous_sub_url.as_ref()
+                        && let Some(suburl) = sub_url.as_ref()
+                    {
+                        imp.video.add_sub(suburl);
+                    }
+                    imp.video.resume_cached(start_seconds);
+                    obj.notify_playing();
+                    obj.update_timeout();
+                    obj.handle_callback(BackType::Start);
+                    return;
+                }
+
+                if imp.cached_playback.borrow().is_some() {
+                    imp.cached_playback.replace(None);
+                    imp.pending_cached_playback.replace(None);
+                    obj.mpv().stop();
+                }
 
                 let video_url = match media_source_stream_url(media_source).await {
                     Some(video_url) => video_url,
