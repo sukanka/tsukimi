@@ -110,6 +110,13 @@ pub struct FallbackContext {
     start_seconds: f64,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct CachedPlayback {
+    item_id: String,
+    media_source_id: String,
+    direct_mode: PlaybackDirectMode,
+}
+
 #[derive(Clone, Copy)]
 enum MpvTrackKind {
     Audio,
@@ -263,10 +270,10 @@ mod imp {
         #[property(get, set, default_value = true)]
         pub can_fade_cursor_set: Cell<bool>,
 
-        /// Tracks the ID of the video currently loaded in mpv.
-        /// When `Some(id)`, a video file is loaded and its demuxer cache is preserved.
-        /// Used to skip re-fetching the playback URL when resuming the same video.
-        pub cached_video_id: RefCell<Option<String>>,
+        /// Tracks the exact resource currently loaded in mpv.
+        pub(super) cached_playback: RefCell<Option<super::CachedPlayback>>,
+        /// Set before `loadfile`; promoted to `cached_playback` after mpv emits FileLoaded.
+        pub(super) pending_cached_playback: RefCell<Option<super::CachedPlayback>>,
     }
 
     #[glib::object_subclass]
@@ -444,6 +451,8 @@ impl MPVPage {
     fn mark_stream_failed(&self) {
         let imp = self.imp();
         imp.allow_fallback.set(false);
+        imp.pending_cached_playback.replace(None);
+        imp.cached_playback.replace(None);
         imp.loading_box.set_visible(false);
         imp.spinner.set_visible(false);
     }
@@ -484,10 +493,9 @@ impl MPVPage {
         self.imp()
             .queued_playback_direct_mode
             .replace(Some(next_mode));
-        // Clear the cached video ID since we're about to unload the file.
-        // This ensures play() takes the full-reload path rather than the
-        // fast resume path (which would fail because mpv.stop() unloaded it).
-        self.imp().cached_video_id.replace(None);
+        // Clear the cached playback since we're about to unload the file.
+        self.imp().cached_playback.replace(None);
+        self.imp().pending_cached_playback.replace(None);
         self.mpv().stop();
 
         spawn_g_timeout(glib::clone!(
@@ -571,7 +579,15 @@ impl MPVPage {
             .queued_playback_direct_mode
             .borrow_mut()
             .take()
-            .unwrap_or_else(PlaybackDirectMode::direct);
+            .unwrap_or_else(|| {
+                self.imp()
+                    .cached_playback
+                    .borrow()
+                    .as_ref()
+                    .filter(|cached| cached.item_id == id)
+                    .map(|cached| cached.direct_mode)
+                    .unwrap_or_else(PlaybackDirectMode::direct)
+            });
         self.imp().playback_direct_mode.replace(direct_mode);
         self.imp().retrying_playback.set(false);
         self.imp().allow_fallback.set(true);
@@ -584,19 +600,16 @@ impl MPVPage {
             async move {
                 let imp = obj.imp();
 
-                // Fast path: if the same video is already loaded in mpv (cache preserved),
-                // skip the network round-trips and just seek to the desired position.
-                {
-                    let cached = imp.cached_video_id.borrow();
-                    if cached.as_deref() == Some(&id) {
-                        imp.spinner.set_visible(false);
-                        imp.loading_box.set_visible(false);
-                        imp.video.resume_cached(start_seconds);
-                        return;
-                    }
+                let cached_item_changed = imp
+                    .cached_playback
+                    .borrow()
+                    .as_ref()
+                    .is_some_and(|cached| cached.item_id != id);
+                if cached_item_changed {
+                    imp.cached_playback.replace(None);
+                    imp.pending_cached_playback.replace(None);
+                    obj.mpv().stop();
                 }
-                // Different video (or first playback): clear cached ID, full load.
-                imp.cached_video_id.replace(None);
 
                 imp.spinner.set_visible(true);
                 imp.loading_box.set_visible(true);
@@ -686,11 +699,34 @@ impl MPVPage {
                             .and_then(|index| media_source.media_streams.get(index.0 as usize))
                     };
 
-                if let Some(slang) = selected.map(|s| s.sub_lang) {
+                if let Some(slang) = selected.as_ref().map(|s| s.sub_lang.clone()) {
                     imp.video.set_slang(slang);
                 } else {
                     imp.video
                         .set_slang(SETTINGS.mpv_subtitle_preferred_lang_str());
+                }
+
+                let cache_key = CachedPlayback {
+                    item_id: id.to_owned(),
+                    media_source_id: media_source.id.to_owned(),
+                    direct_mode,
+                };
+
+                if imp.cached_playback.borrow().as_ref() == Some(&cache_key) {
+                    imp.allow_fallback.set(false);
+                    imp.spinner.set_visible(false);
+                    imp.loading_box.set_visible(false);
+                    imp.video.resume_cached(start_seconds);
+                    obj.notify_playing();
+                    obj.update_timeout();
+                    obj.handle_callback(BackType::Start);
+                    return;
+                }
+
+                if imp.cached_playback.borrow().is_some() {
+                    imp.cached_playback.replace(None);
+                    imp.pending_cached_playback.replace(None);
+                    obj.mpv().stop();
                 }
 
                 let sub_url = match media_stream {
@@ -723,6 +759,7 @@ impl MPVPage {
                     }
                 };
 
+                imp.pending_cached_playback.replace(Some(cache_key));
                 imp.video.play(&video_url, start_seconds);
             }
         ));
@@ -1143,10 +1180,9 @@ impl MPVPage {
     fn on_file_loaded(&self) {
         let imp = self.imp();
         imp.allow_fallback.set(false);
-        // Mark the newly loaded video as cached so we can resume it later
-        // without re-fetching from the network.
-        imp.cached_video_id
-            .replace(self.current_video().map(|v| v.id()));
+        if let Some(cache_key) = imp.pending_cached_playback.take() {
+            imp.cached_playback.replace(Some(cache_key));
+        }
         if let Some(suburl) = imp.suburl.borrow().as_ref() {
             imp.video.add_sub(suburl);
         }
@@ -1401,9 +1437,6 @@ impl MPVPage {
         // and discarded the entire buffer, forcing a full re-buffer on resume.
         // Now we only pause — the cache survives until the app exits or a
         // different video is loaded.
-        let imp = self.imp();
-        imp.cached_video_id
-            .replace(self.current_video().map(|v| v.id()));
         let root = self.root();
         let window = root
             .and_downcast_ref::<crate::ui::widgets::window::Window>()
