@@ -47,10 +47,18 @@ impl MPVPage {
         }
 
         let server = LocalServer::new_with_track_list(app_id, self.imp().obj().clone()).await?;
+        self.imp()
+            .mpris_server
+            .set(server)
+            .map_err(|_| anyhow::anyhow!("Mpris server already initialized"))?;
 
-        // It cant panic here
-        self.imp().mpris_server.set(server).unwrap();
-        spawn(self.imp().mpris_server.get().unwrap().run());
+        spawn(
+            self.imp()
+                .mpris_server
+                .get()
+                .expect("Mpris server not initialized???")
+                .run(),
+        );
         Ok(())
     }
 
@@ -200,14 +208,14 @@ impl LocalPlayerInterface for MPVPage {
 
     async fn pause(&self) -> fdo::Result<()> {
         self.on_pause_update(true);
-        self.mpv().pause(true);
+        self.imp().video.set_pause(true);
         Ok(())
     }
 
     async fn play_pause(&self) -> fdo::Result<()> {
         let paused = self.imp().video.paused();
         self.on_pause_update(!paused);
-        self.mpv().pause(!paused);
+        self.imp().video.set_pause(!paused);
         Ok(())
     }
 
@@ -218,7 +226,7 @@ impl LocalPlayerInterface for MPVPage {
 
     async fn play(&self) -> fdo::Result<()> {
         self.on_pause_update(false);
-        self.mpv().pause(false);
+        self.imp().video.set_pause(false);
         Ok(())
     }
 
@@ -233,7 +241,7 @@ impl LocalPlayerInterface for MPVPage {
     }
 
     async fn set_position(&self, _track_id: TrackId, position: Time) -> fdo::Result<()> {
-        self.mpv().set_position(position.as_secs() as f64);
+        self.imp().video.set_position(position.as_secs() as f64);
         Ok(())
     }
 
@@ -266,7 +274,7 @@ impl LocalPlayerInterface for MPVPage {
     }
 
     async fn set_rate(&self, rate: PlaybackRate) -> zbus::Result<()> {
-        self.mpv().set_speed(rate);
+        self.imp().video.set_speed(rate);
         Ok(())
     }
 
