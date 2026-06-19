@@ -34,30 +34,83 @@ msgstr ""
 msgid "Failed to get GLContext"
 msgstr ""
 
-#: src/ui/mpv/page.rs:411 src/ui/mpv/page.rs:413 src/ui/widgets/item.rs:702
+#: src/ui/mpv/page.rs:523 src/ui/mpv/page.rs:525 src/ui/widgets/item.rs:702
 #: resources/ui/album_widget.ui:94 resources/ui/item.ui:186
 #: resources/ui/mpv_menu_actions.ui:27 resources/ui/other.ui:95
 #: resources/ui/player_toolbar.ui:90
 msgid "Play"
 msgstr ""
 
-#: src/ui/mpv/page.rs:416 src/ui/mpv/page.rs:418 resources/ui/mpvpage.ui:272
+#: src/ui/mpv/page.rs:528 src/ui/mpv/page.rs:530 resources/ui/mpvpage.ui:272
 msgid "Pause"
 msgstr ""
 
-#: src/ui/mpv/page.rs:800
+#: src/ui/mpv/page.rs:569
+msgid "Set App ID and App Secret to load danmaku."
+msgstr ""
+
+#: src/ui/mpv/page.rs:576 src/ui/mpv/page.rs:1193
+msgid "Please fill both App ID and App Secret, or leave both empty."
+msgstr ""
+
+#: src/ui/mpv/page.rs:592
+msgid "Danmaku credential is invalid"
+msgstr ""
+
+#: src/ui/mpv/page.rs:731 src/ui/mpv/page.rs:928
+msgid "Danmaku credential is invalid. Set App ID and App Secret to continue."
+msgstr ""
+
+#: src/ui/mpv/page.rs:785 src/ui/mpv/page.rs:794 src/ui/mpv/page.rs:974
+#: src/ui/mpv/page.rs:975
+msgid "No Danmaku Loaded"
+msgstr ""
+
+#: src/ui/mpv/page.rs:854
+msgid "Danmaku Loaded"
+msgstr ""
+
+#: src/ui/mpv/page.rs:863
+msgid "Failed to load danmaku"
+msgstr ""
+
+#: src/ui/mpv/page.rs:934
+msgid "No video is currently playing"
+msgstr ""
+
+#: src/ui/mpv/page.rs:1010
+msgid "No results found"
+msgstr ""
+
+#: src/ui/mpv/page.rs:1020
+msgid "No episodes found"
+msgstr ""
+
+#: src/ui/mpv/page.rs:1037
+msgid "Select Danmaku Source"
+msgstr ""
+
+#: src/ui/mpv/page.rs:1114
+msgid "Load Danmaku"
+msgstr ""
+
+#: src/ui/mpv/page.rs:1203
+msgid "Failed to save danmaku credentials."
+msgstr ""
+
+#: src/ui/mpv/page.rs:1607
 msgid "Skip Intro"
 msgstr ""
 
-#: src/ui/mpv/page.rs:801
+#: src/ui/mpv/page.rs:1608
 msgid "Skip Outro"
 msgstr ""
 
-#: src/ui/mpv/page.rs:953
+#: src/ui/mpv/page.rs:1761
 msgid "No more video found"
 msgstr ""
 
-#: src/ui/mpv/page.rs:1054
+#: src/ui/mpv/page.rs:1862
 msgid ""
 "MPV has been shutdown, Application will exit.\n"
 "Tsukimi can't restart MPV."
@@ -93,40 +146,74 @@ msgstr ""
 msgid "Name, server and port are required"
 msgstr ""
 
-#: src/ui/widgets/account_settings.rs:239
+#: src/ui/widgets/account_settings.rs:259
 msgid "Password cannot be empty!"
 msgstr ""
 
-#: src/ui/widgets/account_settings.rs:243
+#: src/ui/widgets/account_settings.rs:263
 msgid "Passwords do not match!"
 msgstr ""
 
-#: src/ui/widgets/account_settings.rs:250
+#: src/ui/widgets/account_settings.rs:270
 msgid "Password changed successfully! Please login again."
 msgstr ""
 
-#: src/ui/widgets/account_settings.rs:254
+#: src/ui/widgets/account_settings.rs:274
 msgid "Failed to change password"
 msgstr ""
 
-#: src/ui/widgets/account_settings.rs:288
+#: src/ui/widgets/account_settings.rs:308
 msgid "Cache Cleared"
 msgstr ""
 
-#: src/ui/widgets/account_settings.rs:309
+#: src/ui/widgets/account_settings.rs:329
 msgid "No file selected"
 msgstr ""
 
-#: src/ui/widgets/account_settings.rs:565
-#: src/ui/widgets/account_settings.rs:574
-#: src/ui/widgets/account_settings.rs:608
-#: src/ui/widgets/account_settings.rs:617
+#: src/ui/widgets/account_settings.rs:585
+#: src/ui/widgets/account_settings.rs:594
+#: src/ui/widgets/account_settings.rs:628
+#: src/ui/widgets/account_settings.rs:637
 msgid "Descriptor cannot be empty!"
 msgstr ""
 
-#: src/ui/widgets/account_settings.rs:579
-#: src/ui/widgets/account_settings.rs:622
+#: src/ui/widgets/account_settings.rs:599
+#: src/ui/widgets/account_settings.rs:642
 msgid "Invalid regex"
+msgstr ""
+
+#: src/ui/widgets/account_settings.rs:848
+msgid "Update"
+msgstr ""
+
+#: src/ui/widgets/account_settings.rs:854
+msgid "Edit Custom Server"
+msgstr ""
+
+#: src/ui/widgets/account_settings.rs:860 resources/ui/account.ui:120
+#: resources/ui/account.ui:163 resources/ui/account_settings.ui:437
+#: resources/ui/account_settings.ui:634
+msgid "Add"
+msgstr ""
+
+#: src/ui/widgets/account_settings.rs:866 resources/ui/account_settings.ui:422
+msgid "Add Custom Server"
+msgstr ""
+
+#: src/ui/widgets/account_settings.rs:897
+msgid "Please fill in both name and URL."
+msgstr ""
+
+#: src/ui/widgets/account_settings.rs:907
+msgid "No changes detected."
+msgstr ""
+
+#: src/ui/widgets/account_settings.rs:914
+msgid "Failed to update server."
+msgstr ""
+
+#: src/ui/widgets/account_settings.rs:918
+msgid "Failed to save server."
 msgstr ""
 
 #: src/ui/widgets/disc_box.rs:99 resources/ui/disc_box.ui:9
@@ -166,7 +253,7 @@ msgstr ""
 #: src/ui/widgets/image_dialog/search_page.rs:148
 #: src/ui/widgets/metadata_dialog.rs:289 src/ui/widgets/tu_item/action.rs:489
 #: src/ui/widgets/tu_item/action.rs:549 resources/ui/account.ui:219
-#: resources/ui/account_settings.ui:572 resources/ui/account_settings.ui:682
+#: resources/ui/account_settings.ui:628 resources/ui/account_settings.ui:738
 msgid "Cancel"
 msgstr ""
 
@@ -456,8 +543,9 @@ msgid "Home"
 msgstr ""
 
 #: src/ui/widgets/window.rs:338 resources/ui/identify_dialog.ui:95
-#: resources/ui/image_info_card.ui:127 resources/ui/search.ui:23
-#: resources/ui/window.ui:21 resources/ui/window.ui:273
+#: resources/ui/image_info_card.ui:127 resources/ui/mpvpage.ui:670
+#: resources/ui/search.ui:23 resources/ui/window.ui:21
+#: resources/ui/window.ui:273
 msgid "Search"
 msgstr ""
 
@@ -491,7 +579,8 @@ msgid "Enter the server details below."
 msgstr ""
 
 #: resources/ui/account.ui:48 resources/ui/account.ui:249
-#: resources/ui/identify_dialog.ui:75 resources/ui/other.ui:73
+#: resources/ui/account_settings.ui:425 resources/ui/identify_dialog.ui:75
+#: resources/ui/other.ui:73
 msgid "Name"
 msgstr ""
 
@@ -528,11 +617,6 @@ msgid ""
 "Alternative network routes. You can switch between them after logging in."
 msgstr ""
 
-#: resources/ui/account.ui:120 resources/ui/account.ui:163
-#: resources/ui/account_settings.ui:578
-msgid "Add"
-msgstr ""
-
 #: resources/ui/account.ui:122
 msgid "Add Route"
 msgstr ""
@@ -549,7 +633,7 @@ msgstr ""
 msgid "Route"
 msgstr ""
 
-#: resources/ui/account.ui:225 resources/ui/account_settings.ui:688
+#: resources/ui/account.ui:225 resources/ui/account_settings.ui:744
 #: resources/ui/image_dialog_edit_page.ui:37
 msgid "Save"
 msgstr ""
@@ -595,7 +679,7 @@ msgstr ""
 msgid "Jellyfin only"
 msgstr ""
 
-#: resources/ui/account_settings.ui:86
+#: resources/ui/account_settings.ui:86 resources/ui/mpvpage.ui:616
 msgid "Appearance"
 msgstr ""
 
@@ -691,11 +775,11 @@ msgstr ""
 msgid "Clear Cache"
 msgstr ""
 
-#: resources/ui/account_settings.ui:288 resources/ui/account_settings.ui:407
+#: resources/ui/account_settings.ui:288 resources/ui/account_settings.ui:463
 msgid "Others"
 msgstr ""
 
-#: resources/ui/account_settings.ui:291 resources/ui/account_settings.ui:483
+#: resources/ui/account_settings.ui:291 resources/ui/account_settings.ui:539
 msgid "Preferred Video Version"
 msgstr ""
 
@@ -756,85 +840,109 @@ msgstr ""
 msgid "Config dir"
 msgstr ""
 
-#: resources/ui/account_settings.ui:412
-msgid "Video Output"
+#: resources/ui/account_settings.ui:407 resources/ui/mpvpage.ui:594
+msgid "Danmaku"
+msgstr ""
+
+#: resources/ui/account_settings.ui:412 resources/ui/mpvpage.ui:682
+msgid "DanDanPlay API"
 msgstr ""
 
 #: resources/ui/account_settings.ui:413
-msgid "Only for debugging"
+msgid "Custom servers compatible with dandanplay API protocol"
 msgstr ""
 
 #: resources/ui/account_settings.ui:416
+msgid "Active Server"
+msgstr ""
+
+#: resources/ui/account_settings.ui:431
+msgid "URL"
+msgstr ""
+
+#: resources/ui/account_settings.ui:449
+msgid "Remove Selected Server"
+msgstr ""
+
+#: resources/ui/account_settings.ui:468
+msgid "Video Output"
+msgstr ""
+
+#: resources/ui/account_settings.ui:469
+msgid "Only for debugging"
+msgstr ""
+
+#: resources/ui/account_settings.ui:472
 msgid "libmpv (default)"
 msgstr ""
 
-#: resources/ui/account_settings.ui:461
+#: resources/ui/account_settings.ui:517
 msgid "Preferred Version"
 msgstr ""
 
-#: resources/ui/account_settings.ui:484
+#: resources/ui/account_settings.ui:540
 msgid ""
 "Weight is ordered from high to low, until a specific version is matched, or "
 "the highest matching version is obtained before clearing the match list"
 msgstr ""
 
-#: resources/ui/account_settings.ui:499
+#: resources/ui/account_settings.ui:555
 msgid "Descriptors"
 msgstr ""
 
-#: resources/ui/account_settings.ui:521
+#: resources/ui/account_settings.ui:577
 msgid "It is recommended to set no more than 3 lines"
 msgstr ""
 
-#: resources/ui/account_settings.ui:542
+#: resources/ui/account_settings.ui:598
 msgid "No Descriptors"
 msgstr ""
 
-#: resources/ui/account_settings.ui:561
+#: resources/ui/account_settings.ui:617
 msgid "Add a descriptor"
 msgstr ""
 
-#: resources/ui/account_settings.ui:603 resources/ui/account_settings.ui:713
+#: resources/ui/account_settings.ui:659 resources/ui/account_settings.ui:769
 msgid "This will use exact matching to obtain a list"
 msgstr ""
 
-#: resources/ui/account_settings.ui:606 resources/ui/account_settings.ui:716
+#: resources/ui/account_settings.ui:662 resources/ui/account_settings.ui:772
 msgid "Descriptor Type"
 msgstr ""
 
-#: resources/ui/account_settings.ui:611 resources/ui/account_settings.ui:721
+#: resources/ui/account_settings.ui:667 resources/ui/account_settings.ui:777
 msgid "String"
 msgstr ""
 
-#: resources/ui/account_settings.ui:612 resources/ui/account_settings.ui:722
+#: resources/ui/account_settings.ui:668 resources/ui/account_settings.ui:778
 msgid "Regular Expression"
 msgstr ""
 
-#: resources/ui/account_settings.ui:624 resources/ui/account_settings.ui:734
+#: resources/ui/account_settings.ui:680 resources/ui/account_settings.ui:790
 msgid "Descriptor"
 msgstr ""
 
-#: resources/ui/account_settings.ui:629 resources/ui/account_settings.ui:739
+#: resources/ui/account_settings.ui:685 resources/ui/account_settings.ui:795
 msgid "Descriptor should not be too long"
 msgstr ""
 
-#: resources/ui/account_settings.ui:640 resources/ui/account_settings.ui:750
+#: resources/ui/account_settings.ui:696 resources/ui/account_settings.ui:806
 msgid "eg. 1080p"
 msgstr ""
 
-#: resources/ui/account_settings.ui:651 resources/ui/account_settings.ui:761
+#: resources/ui/account_settings.ui:707 resources/ui/account_settings.ui:817
 msgid "eg. 1080p.*WebDL"
 msgstr ""
 
-#: resources/ui/account_settings.ui:671
+#: resources/ui/account_settings.ui:727
 msgid "Edit descriptor"
 msgstr ""
 
-#: resources/ui/account_settings.ui:781
+#: resources/ui/account_settings.ui:837
 msgid "Change folder"
 msgstr ""
 
-#: resources/ui/account_settings.ui:783
+#: resources/ui/account_settings.ui:839
 msgid "Select new mpv config folder"
 msgstr ""
 
@@ -1091,13 +1199,13 @@ msgid "Media Menu"
 msgstr ""
 
 #: resources/ui/media_viewer.ui:58 resources/ui/media_viewer.ui:60
-#: resources/ui/mpvpage.ui:401 resources/ui/mpvpage.ui:404
+#: resources/ui/mpvpage.ui:413 resources/ui/mpvpage.ui:416
 #: resources/ui/window.ui:17 resources/ui/window.ui:50
 msgid "Fullscreen"
 msgstr ""
 
 #: resources/ui/media_viewer.ui:69 resources/ui/media_viewer.ui:71
-#: resources/ui/mpvpage.ui:418 resources/ui/mpvpage.ui:420
+#: resources/ui/mpvpage.ui:430 resources/ui/mpvpage.ui:432
 msgid "Exit Fullscreen"
 msgstr ""
 
@@ -1445,7 +1553,7 @@ msgstr ""
 msgid "Playlist"
 msgstr ""
 
-#: resources/ui/mpv_menu.ui:40 resources/ui/mpvpage.ui:388
+#: resources/ui/mpv_menu.ui:40 resources/ui/mpvpage.ui:400
 msgid "Advanced settings"
 msgstr ""
 
@@ -1651,7 +1759,48 @@ msgid "Media info (MPV)"
 msgstr ""
 
 #: resources/ui/mpvpage.ui:376
+msgid "Danmaku Options"
+msgstr ""
+
+#: resources/ui/mpvpage.ui:388
 msgid "Adjust Volume"
+msgstr ""
+
+#: resources/ui/mpvpage.ui:613
+msgid "No danmakus loaded"
+msgstr ""
+
+#: resources/ui/mpvpage.ui:620
+msgid "Danmaku Opacity"
+msgstr ""
+
+#: resources/ui/mpvpage.ui:633
+msgid "Danmaku Speed"
+msgstr ""
+
+#: resources/ui/mpvpage.ui:648
+msgid "Search Danmaku Manually"
+msgstr ""
+
+#: resources/ui/mpvpage.ui:652
+msgid "Anime"
+msgstr ""
+
+#: resources/ui/mpvpage.ui:658 resources/ui/other.ui:146
+#: resources/ui/search.ui:90
+msgid "Episode"
+msgstr ""
+
+#: resources/ui/mpvpage.ui:664
+msgid "TMDB ID"
+msgstr ""
+
+#: resources/ui/mpvpage.ui:683
+msgid "Set App ID and App Secret before loading danmaku from dandanplay."
+msgstr ""
+
+#: resources/ui/mpvpage.ui:699
+msgid "Server"
 msgstr ""
 
 #: resources/ui/other.ui:113
@@ -1664,10 +1813,6 @@ msgstr ""
 
 #: resources/ui/other.ui:140 resources/ui/search.ui:48
 msgid "Series"
-msgstr ""
-
-#: resources/ui/other.ui:146 resources/ui/search.ui:90
-msgid "Episode"
 msgstr ""
 
 #: resources/ui/player_toolbar.ui:78
