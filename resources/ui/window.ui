@@ -228,6 +228,17 @@
                                           </object>
                                         </child>
                                         <child type="suffix">
+                                          <object class="GtkMenuButton" id="route_switch_button">
+                                            <property name="visible">false</property>
+                                            <property name="valign">center</property>
+                                            <property name="icon-name">network-transmit-receive-symbolic</property>
+                                            <property name="tooltip-text" translatable="yes">Switch Route</property>
+                                            <style>
+                                              <class name="flat" />
+                                            </style>
+                                          </object>
+                                        </child>
+                                        <child type="suffix">
                                           <object class="GtkToggleButton">
                                             <property name="valign">center</property>
                                             <property name="icon-name">applications-system-symbolic</property>
