@@ -1337,6 +1337,17 @@ impl MPVPage {
 
         let id = item.id();
         let series_id = item.series_id();
+        #[cfg(target_os = "linux")]
+        let should_clear_danmaku = self.current_video().is_none_or(|video| video.id() != id);
+        #[cfg(target_os = "linux")]
+        if should_clear_danmaku {
+            self.imp().danmaku_list.replace(None);
+            self.imp().video.clear_danmaku();
+            self.imp()
+                .danmaku_page
+                .set_description(&gettext("No danmakus loaded"));
+        }
+
         self.imp().video_scale.reset_scale();
         self.imp().last_playback_position.set(start_seconds);
         self.reset_skippable_segments();
@@ -1392,6 +1403,7 @@ impl MPVPage {
                         imp.spinner.set_visible(false);
                         imp.loading_box.set_visible(false);
                         imp.video.resume_cached(start_seconds);
+                        imp.video.refresh_danmaku_timeline();
                         return;
                     }
                 }
@@ -1850,6 +1862,9 @@ impl MPVPage {
                         ListenEvent::ChapterList(value) => {
                             obj.on_chapter_list(value);
                         }
+                        ListenEvent::DanmakuTimeline(value) => {
+                            obj.imp().video_scale.set_danmaku_timeline(value);
+                        }
                     }
                 }
             }
@@ -1876,6 +1891,7 @@ impl MPVPage {
         let duration = format_duration(value as i64);
         let width_chars = duration.chars().count() as i32;
         imp.video_scale.set_range(0.0, value);
+        imp.video_scale.refresh_danmaku_distribution();
         imp.progress_time_label.set_width_chars(width_chars);
         imp.duration_label.set_width_chars(width_chars);
         imp.duration_label.set_text(&duration);
