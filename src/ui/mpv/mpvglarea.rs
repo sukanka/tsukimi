@@ -164,14 +164,19 @@ mod imp {
             }
 
             let tmpv = self.mpv();
-            let mut handle = tmpv.mpv.ctx;
-            let mut ctx = RenderContext::new(unsafe { handle.as_mut() }, render_params)
+            let mut ctx = tmpv
+                .mpv
+                .create_render_context(render_params)
                 .expect("Failed creating render context");
 
             ctx.set_update_callback(|| {
                 let _ = RENDER_UPDATE.tx.send(true);
             });
 
+            // RenderContext carries a lifetime marker for the Mpv handle. TsukimiMPV
+            // owns both values and drops ctx before mpv, so storing it here is valid.
+            let ctx =
+                unsafe { std::mem::transmute::<RenderContext<'_>, RenderContext<'static>>(ctx) };
             tmpv.ctx.replace(Some(ctx));
 
             tmpv.process_events();
