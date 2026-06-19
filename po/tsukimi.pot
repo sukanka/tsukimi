@@ -34,59 +34,63 @@ msgstr ""
 msgid "Failed to get GLContext"
 msgstr ""
 
-#: src/ui/mpv/page.rs:407 src/ui/mpv/page.rs:409 src/ui/widgets/item.rs:699
+#: src/ui/mpv/page.rs:411 src/ui/mpv/page.rs:413 src/ui/widgets/item.rs:702
 #: resources/ui/album_widget.ui:94 resources/ui/item.ui:186
 #: resources/ui/mpv_menu_actions.ui:27 resources/ui/other.ui:95
 #: resources/ui/player_toolbar.ui:90
 msgid "Play"
 msgstr ""
 
-#: src/ui/mpv/page.rs:412 src/ui/mpv/page.rs:414 resources/ui/mpvpage.ui:272
+#: src/ui/mpv/page.rs:416 src/ui/mpv/page.rs:418 resources/ui/mpvpage.ui:272
 msgid "Pause"
 msgstr ""
 
-#: src/ui/mpv/page.rs:777
+#: src/ui/mpv/page.rs:800
 msgid "Skip Intro"
 msgstr ""
 
-#: src/ui/mpv/page.rs:778
+#: src/ui/mpv/page.rs:801
 msgid "Skip Outro"
 msgstr ""
 
-#: src/ui/mpv/page.rs:930
+#: src/ui/mpv/page.rs:953
 msgid "No more video found"
 msgstr ""
 
-#: src/ui/mpv/page.rs:1031
+#: src/ui/mpv/page.rs:1054
 msgid ""
 "MPV has been shutdown, Application will exit.\n"
 "Tsukimi can't restart MPV."
 msgstr ""
 
-#: src/ui/provider/tu_item.rs:548
+#: src/ui/provider/tu_item.rs:551
 msgid "No next up video found"
 msgstr ""
 
-#: src/ui/provider/tu_item.rs:577 src/ui/widgets/tu_overview_item.rs:256
+#: src/ui/provider/tu_item.rs:580 src/ui/widgets/tu_overview_item.rs:256
 msgid "Present"
 msgstr ""
 
-#: src/ui/provider/tu_item.rs:585 src/ui/provider/tu_item.rs:603
-#: src/ui/provider/tu_item.rs:626 src/ui/provider/tu_item.rs:649
-#: src/ui/provider/tu_item.rs:652
+#: src/ui/provider/tu_item.rs:588 src/ui/provider/tu_item.rs:606
+#: src/ui/provider/tu_item.rs:629 src/ui/provider/tu_item.rs:652
+#: src/ui/provider/tu_item.rs:655
 msgid "Unknown"
 msgstr ""
 
-#: src/ui/widgets/account_add.rs:145
+#: src/ui/widgets/account_add.rs:175
 msgid "Fields must be filled in"
 msgstr ""
 
-#: src/ui/widgets/account_add.rs:206
+#: src/ui/widgets/account_add.rs:270
 msgid "Server edited successfully"
 msgstr ""
 
-#: src/ui/widgets/account_add.rs:211
+#: src/ui/widgets/account_add.rs:275
 msgid "Server added successfully"
+msgstr ""
+
+#: src/ui/widgets/account_add.rs:455
+msgid "Name, server and port are required"
 msgstr ""
 
 #: src/ui/widgets/account_settings.rs:239
@@ -130,7 +134,7 @@ msgid "Disc"
 msgstr ""
 
 #. if merged, next up will contain resume items, so change title to continue watching
-#: src/ui/widgets/home.rs:230 resources/ui/home.ui:25 resources/ui/item.ui:300
+#: src/ui/widgets/home.rs:230 resources/ui/home.ui:25 resources/ui/item.ui:323
 msgid "Continue Watching"
 msgstr ""
 
@@ -161,8 +165,8 @@ msgstr ""
 #: src/ui/widgets/identify/search_page.rs:130
 #: src/ui/widgets/image_dialog/search_page.rs:148
 #: src/ui/widgets/metadata_dialog.rs:289 src/ui/widgets/tu_item/action.rs:489
-#: src/ui/widgets/tu_item/action.rs:549 resources/ui/account_settings.ui:572
-#: resources/ui/account_settings.ui:682
+#: src/ui/widgets/tu_item/action.rs:549 resources/ui/account.ui:219
+#: resources/ui/account_settings.ui:572 resources/ui/account_settings.ui:682
 msgid "Cancel"
 msgstr ""
 
@@ -217,80 +221,80 @@ msgstr ""
 msgid "Replace Image"
 msgstr ""
 
-#: src/ui/widgets/item.rs:349
+#: src/ui/widgets/item.rs:351
 msgid "No episode selected"
 msgstr ""
 
-#: src/ui/widgets/item.rs:350
+#: src/ui/widgets/item.rs:352
 msgid "Select an episode"
 msgstr ""
 
-#: src/ui/widgets/item.rs:695 src/ui/widgets/list.rs:130
+#: src/ui/widgets/item.rs:698 src/ui/widgets/list.rs:130
 msgid "Resume"
 msgstr ""
 
-#: src/ui/widgets/item.rs:1087
+#: src/ui/widgets/item.rs:1095
 msgid "Codec"
 msgstr ""
 
-#: src/ui/widgets/item.rs:1090
+#: src/ui/widgets/item.rs:1098
 msgid "Language"
 msgstr ""
 
-#: src/ui/widgets/item.rs:1093 resources/ui/metadata_dialog.ui:91
+#: src/ui/widgets/item.rs:1101 resources/ui/metadata_dialog.ui:91
 #: resources/ui/single_grid.ui:108
 msgid "Title"
 msgstr ""
 
-#: src/ui/widgets/item.rs:1097 resources/ui/single_grid.ui:109
+#: src/ui/widgets/item.rs:1105 resources/ui/single_grid.ui:109
 msgid "Bitrate"
 msgstr ""
 
-#: src/ui/widgets/item.rs:1102
+#: src/ui/widgets/item.rs:1110
 msgid "BitDepth"
 msgstr ""
 
-#: src/ui/widgets/item.rs:1106
+#: src/ui/widgets/item.rs:1114
 msgid "SampleRate"
 msgstr ""
 
-#: src/ui/widgets/item.rs:1110
+#: src/ui/widgets/item.rs:1118
 msgid "Height"
 msgstr ""
 
-#: src/ui/widgets/item.rs:1113
+#: src/ui/widgets/item.rs:1121
 msgid "Width"
 msgstr ""
 
-#: src/ui/widgets/item.rs:1116
+#: src/ui/widgets/item.rs:1124
 msgid "ColorSpace"
 msgstr ""
 
-#: src/ui/widgets/item.rs:1120
+#: src/ui/widgets/item.rs:1128
 msgid "DisplayTitle"
 msgstr ""
 
-#: src/ui/widgets/item.rs:1124
+#: src/ui/widgets/item.rs:1132
 msgid "Channel"
 msgstr ""
 
-#: src/ui/widgets/item.rs:1128
+#: src/ui/widgets/item.rs:1136
 msgid "ChannelLayout"
 msgstr ""
 
-#: src/ui/widgets/item.rs:1133
+#: src/ui/widgets/item.rs:1141
 msgid "AverageFrameRate"
 msgstr ""
 
-#: src/ui/widgets/item.rs:1137
+#: src/ui/widgets/item.rs:1145
 msgid "PixelFormat"
 msgstr ""
 
-#: src/ui/widgets/item.rs:1249
+#: src/ui/widgets/item.rs:1257
 msgid "No video source found"
 msgstr ""
 
-#: src/ui/widgets/item.rs:1322
+#: src/ui/widgets/item.rs:1330
 msgid "Season not found. Is this a continue watching list?"
 msgstr ""
 
@@ -315,17 +319,17 @@ msgid "BoxSet"
 msgstr ""
 
 #: src/ui/widgets/list.rs:132 resources/ui/filter.ui:85
-#: resources/ui/item.ui:490 resources/ui/other.ui:168
+#: resources/ui/item.ui:513 resources/ui/other.ui:168
 msgid "Tags"
 msgstr ""
 
 #: src/ui/widgets/list.rs:133 resources/ui/filter.ui:78
-#: resources/ui/item.ui:485 resources/ui/other.ui:173
+#: resources/ui/item.ui:508 resources/ui/other.ui:173
 msgid "Genres"
 msgstr ""
 
-#: src/ui/widgets/list.rs:134 src/ui/widgets/window.rs:316
-#: resources/ui/window.ui:256
+#: src/ui/widgets/list.rs:134 src/ui/widgets/window.rs:326
+#: resources/ui/window.ui:267
 msgid "Liked"
 msgstr ""
 
@@ -447,30 +451,34 @@ msgstr ""
 msgid "Are you sure you wish to reset all metadata?"
 msgstr ""
 
-#: src/ui/widgets/window.rs:304 resources/ui/window.ui:250
+#: src/ui/widgets/window.rs:314 resources/ui/window.ui:261
 msgid "Home"
 msgstr ""
 
-#: src/ui/widgets/window.rs:328 resources/ui/identify_dialog.ui:95
+#: src/ui/widgets/window.rs:338 resources/ui/identify_dialog.ui:95
 #: resources/ui/image_info_card.ui:127 resources/ui/search.ui:23
-#: resources/ui/window.ui:21 resources/ui/window.ui:262
+#: resources/ui/window.ui:21 resources/ui/window.ui:273
 msgid "Search"
 msgstr ""
 
-#: src/ui/widgets/window.rs:814
+#: src/ui/widgets/window.rs:564
+msgid "Failed to save account"
+msgstr ""
+
+#: src/ui/widgets/window.rs:880
 msgid "Server Panel"
 msgstr ""
 
-#: src/ui/widgets/window.rs:988
+#: src/ui/widgets/window.rs:1054
 msgid "Fatal Error"
 msgstr ""
 
-#: src/ui/widgets/window.rs:991
+#: src/ui/widgets/window.rs:1057
 msgid "Copy Error & Close"
 msgstr ""
 
 #. TRANSLATORS: 'Name <email@domain.com>' or 'Name https://website.example'
-#: src/ui/widgets/window.rs:1020
+#: src/ui/widgets/window.rs:1086
 msgid "translator-credits"
 msgstr ""
 
@@ -482,29 +490,68 @@ msgstr ""
 msgid "Enter the server details below."
 msgstr ""
 
-#: resources/ui/account.ui:48 resources/ui/identify_dialog.ui:75
-#: resources/ui/other.ui:73
+#: resources/ui/account.ui:48 resources/ui/account.ui:249
+#: resources/ui/identify_dialog.ui:75 resources/ui/other.ui:73
 msgid "Name"
 msgstr ""
 
-#: resources/ui/account.ui:66
+#: resources/ui/account.ui:66 resources/ui/account.ui:254
 msgid "Server Address"
 msgstr ""
 
-#: resources/ui/account.ui:85
+#: resources/ui/account.ui:85 resources/ui/account.ui:272
 msgid "Port"
 msgstr ""
 
 #: resources/ui/account.ui:92
+msgid "Route Name (optional, e.g. \"LAN\", \"WAN\")"
+msgstr ""
+
+#: resources/ui/account.ui:97 resources/ui/account.ui:279
+msgid "URL Path Prefix (optional, e.g. for reverse proxy)"
+msgstr ""
+
+#: resources/ui/account.ui:102
 msgid "Username"
 msgstr ""
 
-#: resources/ui/account.ui:97
+#: resources/ui/account.ui:107
 msgid "Password"
 msgstr ""
 
-#: resources/ui/account.ui:108 resources/ui/account_settings.ui:578
+#: resources/ui/account.ui:116
+msgid "Additional Routes"
+msgstr ""
+
+#: resources/ui/account.ui:117
+msgid ""
+"Alternative network routes. You can switch between them after logging in."
+msgstr ""
+
+#: resources/ui/account.ui:120 resources/ui/account.ui:163
+#: resources/ui/account_settings.ui:578
 msgid "Add"
+msgstr ""
+
+#: resources/ui/account.ui:122
+msgid "Add Route"
+msgstr ""
+
+#: resources/ui/account.ui:136
+msgid "No additional routes"
+msgstr ""
+
+#: resources/ui/account.ui:137
+msgid "Click the Add button to add a route."
+msgstr ""
+
+#: resources/ui/account.ui:208 resources/ui/item.ui:269
+msgid "Route"
+msgstr ""
+
+#: resources/ui/account.ui:225 resources/ui/account_settings.ui:688
+#: resources/ui/image_dialog_edit_page.ui:37
+msgid "Save"
 msgstr ""
 
 #: resources/ui/account_settings.ui:4
@@ -783,11 +830,6 @@ msgstr ""
 msgid "Edit descriptor"
 msgstr ""
 
-#: resources/ui/account_settings.ui:688
-#: resources/ui/image_dialog_edit_page.ui:37
-msgid "Save"
-msgstr ""
-
 #: resources/ui/account_settings.ui:781
 msgid "Change folder"
 msgstr ""
@@ -833,7 +875,7 @@ msgstr ""
 msgid "Official Ratings"
 msgstr ""
 
-#: resources/ui/filter.ui:106 resources/ui/item.ui:480
+#: resources/ui/filter.ui:106 resources/ui/item.ui:503
 #: resources/ui/other.ui:163
 msgid "Studios"
 msgstr ""
@@ -973,40 +1015,48 @@ msgstr ""
 msgid "Subtitle: "
 msgstr ""
 
-#: resources/ui/item.ui:314
+#: resources/ui/item.ui:260
+msgid "Route: "
+msgstr ""
+
+#: resources/ui/item.ui:270 resources/ui/window.ui:235
+msgid "Switch Route"
+msgstr ""
+
+#: resources/ui/item.ui:337
 msgid "View this season"
 msgstr ""
 
-#: resources/ui/item.ui:423 resources/ui/liked.ui:69
+#: resources/ui/item.ui:446 resources/ui/liked.ui:69
 #: resources/ui/single_grid.ui:167
 msgid "Nothing Here"
 msgstr ""
 
-#: resources/ui/item.ui:450
+#: resources/ui/item.ui:473
 msgid "Included In"
 msgstr ""
 
-#: resources/ui/item.ui:455
+#: resources/ui/item.ui:478
 msgid "Additional Parts"
 msgstr ""
 
-#: resources/ui/item.ui:460
+#: resources/ui/item.ui:483
 msgid "Seasons"
 msgstr ""
 
-#: resources/ui/item.ui:465 resources/ui/other.ui:158
+#: resources/ui/item.ui:488 resources/ui/other.ui:158
 msgid "Actors"
 msgstr ""
 
-#: resources/ui/item.ui:470
+#: resources/ui/item.ui:493
 msgid "Recommend"
 msgstr ""
 
-#: resources/ui/item.ui:475 resources/ui/other.ui:178
+#: resources/ui/item.ui:498 resources/ui/other.ui:178
 msgid "Links"
 msgstr ""
 
-#: resources/ui/item.ui:508
+#: resources/ui/item.ui:531
 msgid "MediaInfo"
 msgstr ""
 
@@ -1107,7 +1157,7 @@ msgstr ""
 msgid "Upcoming"
 msgstr ""
 
-#: resources/ui/mpv_control_sidebar.ui:5 resources/ui/window.ui:445
+#: resources/ui/mpv_control_sidebar.ui:5 resources/ui/window.ui:456
 msgid "Advanced Settings"
 msgstr ""
 
@@ -1391,7 +1441,7 @@ msgid "Previous chapter"
 msgstr ""
 
 #: resources/ui/mpv_menu.ui:35 resources/ui/mpvpage.ui:172
-#: resources/ui/window.ui:394 resources/ui/window.ui:416
+#: resources/ui/window.ui:405 resources/ui/window.ui:427
 msgid "Playlist"
 msgstr ""
 
@@ -1820,10 +1870,10 @@ msgstr ""
 msgid "Log Out"
 msgstr ""
 
-#: resources/ui/window.ui:247
+#: resources/ui/window.ui:258
 msgid "Contents"
 msgstr ""
 
-#: resources/ui/window.ui:270
+#: resources/ui/window.ui:281
 msgid "Servers"
 msgstr ""
