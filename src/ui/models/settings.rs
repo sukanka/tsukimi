@@ -11,15 +11,15 @@ use gtk::{
 
 use crate::{
     APP_ID,
-    client::Account,
+    client::{
+        Account,
+        DanmakuServer,
+    },
     ui::provider::descriptor::{
         Descriptor,
         VecSerialize,
     },
 };
-
-#[cfg(target_os = "linux")]
-use crate::client::DanmakuServer;
 
 pub struct Settings(ThreadGuard<gio::Settings>);
 
@@ -190,12 +190,46 @@ impl Settings {
         self.set_string(Self::KEY_DANMAKU_APPSECRET, appsecret)
     }
 
-    #[cfg(target_os = "linux")]
     pub fn danmaku_servers(&self) -> Vec<DanmakuServer> {
         if !self.has_key(Self::KEY_DANMAKU_SERVERS) {
             return Vec::new();
         }
         serde_json::from_str(self.string(Self::KEY_DANMAKU_SERVERS).as_ref()).unwrap_or_default()
+    }
+
+    pub fn set_danmaku_servers(&self, servers: Vec<DanmakuServer>) -> Result<(), glib::BoolError> {
+        if !self.has_key(Self::KEY_DANMAKU_SERVERS) {
+            return Ok(());
+        }
+        self.set_string(
+            Self::KEY_DANMAKU_SERVERS,
+            &serde_json::to_string(&servers).unwrap_or_default(),
+        )
+    }
+
+    pub fn add_danmaku_server(&self, server: DanmakuServer) -> Result<(), glib::BoolError> {
+        let mut servers = self.danmaku_servers();
+        if servers.contains(&server) {
+            return Ok(());
+        }
+        servers.push(server);
+        self.set_danmaku_servers(servers)
+    }
+
+    pub fn edit_danmaku_server(
+        &self, old: &DanmakuServer, new: DanmakuServer,
+    ) -> Result<(), glib::BoolError> {
+        let mut servers = self.danmaku_servers();
+        if let Some(server) = servers.iter_mut().find(|server| *server == old) {
+            *server = new;
+        }
+        self.set_danmaku_servers(servers)
+    }
+
+    pub fn remove_danmaku_server(&self, server: &DanmakuServer) -> Result<(), glib::BoolError> {
+        let mut servers = self.danmaku_servers();
+        servers.retain(|saved_server| saved_server != server);
+        self.set_danmaku_servers(servers)
     }
 
     pub fn danmaku_active_server(&self) -> i32 {
