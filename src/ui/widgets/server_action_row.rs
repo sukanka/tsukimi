@@ -148,8 +148,17 @@ impl ServerActionRow {
         account_window.imp().server_entry.set_text(&account.server);
         account_window
             .imp()
+            .path_entry
+            .set_text(account.path.as_deref().unwrap_or(""));
+        account_window
+            .imp()
+            .main_route_name_entry
+            .set_text(account.route_name.as_deref().unwrap_or(""));
+        account_window
+            .imp()
             .server_type
             .set_selected(account.server_type.unwrap_or_default().index());
+        account_window.set_routes(account.routes.clone());
         account_window.present(self.root().as_ref());
     }
 

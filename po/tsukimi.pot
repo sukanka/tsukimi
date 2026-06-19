@@ -161,8 +161,8 @@ msgstr ""
 #: src/ui/widgets/identify/search_page.rs:129
 #: src/ui/widgets/image_dialog/search_page.rs:151
 #: src/ui/widgets/metadata_dialog.rs:293 src/ui/widgets/tu_item/action.rs:489
-#: src/ui/widgets/tu_item/action.rs:549 resources/ui/account_settings.ui:515
-#: resources/ui/account_settings.ui:625
+#: src/ui/widgets/tu_item/action.rs:549 resources/ui/account.ui:219
+#: resources/ui/account_settings.ui:515 resources/ui/account_settings.ui:625
 msgid "Cancel"
 msgstr ""
 
@@ -342,6 +342,18 @@ msgstr ""
 msgid "No overview"
 msgstr ""
 
+#: src/ui/widgets/window.rs:564
+msgid "Failed to save account"
+msgstr ""
+
+#: src/ui/widgets/window.rs:573
+msgid "Failed to switch route"
+msgstr ""
+
+#: src/ui/widgets/account_add.rs:446
+msgid "Name, server and port are required"
+msgstr ""
+
 #: src/ui/widgets/server_action_row.rs:129
 msgid "Edit Server"
 msgstr ""
@@ -484,15 +496,57 @@ msgid "Port"
 msgstr ""
 
 #: resources/ui/account.ui:92
+msgid "Route Name (optional, e.g. \"LAN\", \"WAN\")"
+msgstr ""
+
+#: resources/ui/account.ui:97 resources/ui/account.ui:279
+msgid "URL Path Prefix (optional, e.g. for reverse proxy)"
+msgstr ""
+
+#: resources/ui/account.ui:102
 msgid "Username"
 msgstr ""
 
-#: resources/ui/account.ui:97
+#: resources/ui/account.ui:107
 msgid "Password"
 msgstr ""
 
-#: resources/ui/account.ui:108 resources/ui/account_settings.ui:521
+#: resources/ui/account.ui:116
+msgid "Additional Routes"
+msgstr ""
+
+#: resources/ui/account.ui:117
+msgid "Alternative network routes. You can switch between them after logging in."
+msgstr ""
+
+#: resources/ui/account.ui:120 resources/ui/account.ui:163
+#: resources/ui/account_settings.ui:521
 msgid "Add"
+msgstr ""
+
+#: resources/ui/account.ui:122
+msgid "Add Route"
+msgstr ""
+
+#: resources/ui/account.ui:136
+msgid "No additional routes"
+msgstr ""
+
+#: resources/ui/account.ui:137
+msgid "Click the Add button to add a route."
+msgstr ""
+
+#: resources/ui/account.ui:208 resources/ui/item.ui:269
+#: src/ui/widgets/route_switcher.rs:38 src/ui/widgets/route_switcher.rs:75
+msgid "Route"
+msgstr ""
+
+#: resources/ui/item.ui:260
+msgid "Route: "
+msgstr ""
+
+#: resources/ui/item.ui:270 resources/ui/window.ui:235
+msgid "Switch Route"
 msgstr ""
 
 #: resources/ui/account_settings.ui:4
@@ -739,7 +793,7 @@ msgstr ""
 msgid "Edit descriptor"
 msgstr ""
 
-#: resources/ui/account_settings.ui:631
+#: resources/ui/account.ui:225 resources/ui/account_settings.ui:631
 #: resources/ui/image_dialog_edit_page.ui:37
 msgid "Save"
 msgstr ""
