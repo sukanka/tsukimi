@@ -1,0 +1,92 @@
+use gettextrs::gettext;
+use gtk::{
+    gio,
+    prelude::*,
+};
+
+use crate::{
+    client::Account,
+    ui::models::SETTINGS,
+};
+
+pub fn current_account() -> Option<Account> {
+    let preferred = SETTINGS.preferred_server();
+    SETTINGS
+        .accounts()
+        .into_iter()
+        .find(|account| account.servername == preferred)
+}
+
+pub fn build_route_menu(account: &Account) -> gio::Menu {
+    let menu = gio::Menu::new();
+    let current = account.active_route;
+
+    let main_label = if current.is_none() {
+        format!("* {}", account.main_route_name())
+    } else {
+        format!("  {}", account.main_route_name())
+    };
+    let main_item = gio::MenuItem::new(Some(&main_label), None);
+    main_item.set_action_and_target_value(Some("win.switch-route"), Some(&(-1i32).to_variant()));
+    menu.append_item(&main_item);
+
+    for (index, route) in account.routes.iter().enumerate() {
+        let name = if route.name.trim().is_empty() {
+            if account.routes.len() == 1 {
+                account.main_route_name().to_string()
+            } else {
+                format!("{} {}", gettext("Route"), index + 1)
+            }
+        } else {
+            route.name.clone()
+        };
+        let label = if current == Some(index) {
+            format!("* {name}")
+        } else {
+            format!("  {name}")
+        };
+        let item = gio::MenuItem::new(Some(&label), None);
+        item.set_action_and_target_value(
+            Some("win.switch-route"),
+            Some(&(index as i32).to_variant()),
+        );
+        menu.append_item(&item);
+    }
+
+    menu
+}
+
+pub fn setup_route_switch_button(button: &gtk::MenuButton) {
+    refresh_route_switch_button(button, current_account().as_ref());
+}
+
+pub fn refresh_route_switch_button(button: &gtk::MenuButton, account: Option<&Account>) {
+    match account {
+        Some(account) => {
+            let label = match account.active_route {
+                Some(index) => account
+                    .routes
+                    .get(index)
+                    .map(|route| {
+                        if route.name.trim().is_empty() {
+                            if account.routes.len() == 1 {
+                                account.main_route_name().to_string()
+                            } else {
+                                format!("{} {}", gettext("Route"), index + 1)
+                            }
+                        } else {
+                            route.name.clone()
+                        }
+                    })
+                    .unwrap_or_else(|| account.main_route_name().to_string()),
+                None => account.main_route_name().to_string(),
+            };
+            button.set_label(&label);
+            button.set_menu_model(Some(&build_route_menu(account)));
+            button.set_visible(true);
+        }
+        None => {
+            button.set_visible(false);
+        }
+    }
+}

@@ -174,6 +174,23 @@ fn generate_hash(s: &str) -> String {
     format!("{:x}", hasher.finish())
 }
 
+fn build_base_url(url_str: &str, port: &str, path: Option<&str>) -> Result<Url> {
+    let mut url = Url::parse(url_str)?;
+    url.set_port(Some(port.parse::<u16>().unwrap_or_default()))
+        .map_err(|_| anyhow!("Failed to set port"))?;
+
+    let joined = match path
+        .map(str::trim)
+        .map(|path| path.trim_matches('/'))
+        .filter(|path| !path.is_empty())
+    {
+        Some(path) => format!("{path}/emby/"),
+        None => "emby/".to_string(),
+    };
+
+    Ok(url.join(&joined)?)
+}
+
 impl Default for JellyfinClient {
     fn default() -> Self {
         Self {
@@ -203,12 +220,8 @@ impl JellyfinClient {
     }
 
     pub async fn init(&self, account: &Account) -> Result<(), Box<dyn std::error::Error>> {
-        let url = {
-            let mut url = Url::parse(&account.server)?;
-            url.set_port(Some(account.port.parse::<u16>().unwrap_or_default()))
-                .map_err(|_| anyhow!("Failed to set port"))?;
-            url.join("emby/")?
-        };
+        let (server, port, path) = account.active_endpoint();
+        let url = build_base_url(server, port, path)?;
 
         let mut headers = reqwest::header::HeaderMap::new();
         headers.insert("Accept-Encoding", HeaderValue::from_static("gzip"));
@@ -249,11 +262,8 @@ impl JellyfinClient {
         Ok(())
     }
 
-    pub fn header_change_url(&self, url_str: &str, port: &str) -> Result<()> {
-        let mut url = Url::parse(url_str)?;
-        url.set_port(Some(port.parse::<u16>().unwrap_or_default()))
-            .map_err(|_| anyhow!("Failed to set port"))?;
-        let url = url.join("emby/")?;
+    pub fn header_change_url(&self, url_str: &str, port: &str, path: Option<&str>) -> Result<()> {
+        let url = build_base_url(url_str, port, path)?;
         self.session.rcu(|current| {
             let mut session = (**current).clone();
             session.url = Some(url.clone());
@@ -1546,7 +1556,7 @@ mod tests {
 
     #[tokio::test]
     async fn search() {
-        let _ = JELLYFIN_CLIENT.header_change_url("https://example.com", "443");
+        let _ = JELLYFIN_CLIENT.header_change_url("https://example.com", "443", None);
         let result = JELLYFIN_CLIENT.login("test", "test").await;
         match result {
             Ok(response) => {
@@ -1560,6 +1570,10 @@ mod tests {
                     user_id: response.user.id,
                     access_token: response.access_token,
                     server_type: Some(ServerType::Jellyfin),
+                    path: None,
+                    route_name: None,
+                    routes: Vec::new(),
+                    active_route: None,
                 };
                 let _ = JELLYFIN_CLIENT.init(&account).await;
             }
@@ -1595,7 +1609,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_upload_image() {
-        let _ = JELLYFIN_CLIENT.header_change_url("http://127.0.0.1", "8096");
+        let _ = JELLYFIN_CLIENT.header_change_url("http://127.0.0.1", "8096", None);
         let result = JELLYFIN_CLIENT.login("inaha", "").await;
         match result {
             Ok(response) => {
@@ -1609,6 +1623,10 @@ mod tests {
                     user_id: response.user.id,
                     access_token: response.access_token,
                     server_type: Some(ServerType::Jellyfin),
+                    path: None,
+                    route_name: None,
+                    routes: Vec::new(),
+                    active_route: None,
                 };
                 let _ = JELLYFIN_CLIENT.init(&account).await;
             }

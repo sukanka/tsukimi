@@ -1,4 +1,7 @@
-use adw::prelude::AdwDialogExt;
+use adw::prelude::{
+    ActionRowExt,
+    AdwDialogExt,
+};
 use gettextrs::gettext;
 use glib::Object;
 use gtk::{
@@ -13,6 +16,7 @@ use super::utils::GlobalToast;
 use crate::{
     client::{
         Account,
+        Route,
         account::ServerType,
         error::UserFacingError,
         jellyfin_client::JELLYFIN_CLIENT,
@@ -36,7 +40,10 @@ pub mod imp {
         subclass::prelude::*,
     };
 
-    use crate::client::Account;
+    use crate::client::{
+        Account,
+        Route,
+    };
 
     #[derive(Default, Hash, Eq, PartialEq, Clone, Copy, glib::Enum, Debug)]
     #[repr(u32)]
@@ -63,6 +70,10 @@ pub mod imp {
         #[template_child]
         pub port_entry: TemplateChild<gtk::Entry>,
         #[template_child]
+        pub path_entry: TemplateChild<adw::EntryRow>,
+        #[template_child]
+        pub main_route_name_entry: TemplateChild<adw::EntryRow>,
+        #[template_child]
         pub toast: TemplateChild<adw::ToastOverlay>,
         #[template_child]
         pub stack: TemplateChild<gtk::Stack>,
@@ -75,9 +86,28 @@ pub mod imp {
         #[template_child]
         pub server_type: TemplateChild<gtk::DropDown>,
 
+        #[template_child]
+        pub routes_stack: TemplateChild<gtk::Stack>,
+        #[template_child]
+        pub routes_listbox: TemplateChild<gtk::ListBox>,
+        #[template_child]
+        pub route_dialog: TemplateChild<adw::Dialog>,
+        #[template_child]
+        pub route_name_entry: TemplateChild<adw::EntryRow>,
+        #[template_child]
+        pub route_server_entry: TemplateChild<adw::EntryRow>,
+        #[template_child]
+        pub route_protocol: TemplateChild<gtk::DropDown>,
+        #[template_child]
+        pub route_port_entry: TemplateChild<gtk::Entry>,
+        #[template_child]
+        pub route_path_entry: TemplateChild<adw::EntryRow>,
+
         #[property(get, set, builder(ActionType::default()))]
         pub action_type: Cell<ActionType>,
         pub old_account: RefCell<Option<Account>>,
+        pub routes: RefCell<Vec<Route>>,
+        pub editing_route_index: Cell<Option<usize>>,
     }
 
     #[glib::object_subclass]
@@ -150,7 +180,18 @@ impl AccountWindow {
 
         let server = format!("{protocol}{server}");
 
-        let _ = JELLYFIN_CLIENT.header_change_url(&server, &port);
+        let path_text = imp.path_entry.text().trim().trim_matches('/').to_string();
+        let path_for_login = if path_text.is_empty() {
+            None
+        } else {
+            Some(path_text.as_str())
+        };
+
+        if let Err(err) = JELLYFIN_CLIENT.header_change_url(&server, &port, path_for_login) {
+            imp.stack.toast(err.to_user_facing());
+            imp.stack.set_visible_child_name("entry");
+            return;
+        }
         let _ = JELLYFIN_CLIENT.header_change_token(&servername);
         let un = username.to_string();
         let pw = password.to_string();
@@ -183,6 +224,18 @@ impl AccountWindow {
         }
 
         let server_type = ServerType::from_index(imp.server_type.selected());
+        let routes = imp.routes.borrow().clone();
+        let active_route = imp.old_account.borrow().as_ref().and_then(|account| {
+            let active_route = account.active_route?;
+            let old_route = account.routes.get(active_route)?;
+            if routes.get(active_route) == Some(old_route) {
+                Some(active_route)
+            } else if account.routes.len() == routes.len() && active_route < routes.len() {
+                Some(active_route)
+            } else {
+                routes.iter().position(|route| route == old_route)
+            }
+        });
 
         let account = Account {
             servername,
@@ -193,6 +246,17 @@ impl AccountWindow {
             user_id: res.user.id,
             access_token: res.access_token,
             server_type: Some(server_type),
+            path: if path_text.is_empty() {
+                None
+            } else {
+                Some(path_text)
+            },
+            route_name: {
+                let name = imp.main_route_name_entry.text().trim().to_string();
+                if name.is_empty() { None } else { Some(name) }
+            },
+            routes,
+            active_route,
         };
 
         let action_type = imp.action_type.get();
@@ -264,5 +328,163 @@ impl AccountWindow {
             self.imp().server_entry.set_text(host);
             self.imp().server_entry.set_position(-1);
         }
+    }
+
+    pub fn set_routes(&self, routes: Vec<Route>) {
+        self.imp().routes.replace(routes);
+        self.refresh_routes();
+    }
+
+    fn refresh_routes(&self) {
+        let imp = self.imp();
+        let listbox = imp.routes_listbox.get();
+        listbox.remove_all();
+
+        let routes = imp.routes.borrow().clone();
+        if routes.is_empty() {
+            imp.routes_stack.set_visible_child_name("empty");
+            return;
+        }
+
+        imp.routes_stack.set_visible_child_name("list");
+
+        for (index, route) in routes.iter().enumerate() {
+            let prefix = route
+                .path
+                .as_deref()
+                .map(str::trim)
+                .map(|path| path.trim_matches('/'))
+                .filter(|path| !path.is_empty())
+                .map(|path| format!("/{path}"))
+                .unwrap_or_default();
+            let subtitle = format!("{}:{}{}/emby", route.server, route.port, prefix);
+            let row = adw::ActionRow::builder()
+                .title(&route.name)
+                .subtitle(subtitle)
+                .activatable(true)
+                .build();
+
+            let delete_button = gtk::Button::builder()
+                .icon_name("user-trash-symbolic")
+                .valign(gtk::Align::Center)
+                .css_classes(["flat"])
+                .build();
+
+            delete_button.connect_clicked(glib::clone!(
+                #[weak(rename_to = obj)]
+                self,
+                move |_| {
+                    {
+                        let mut routes = obj.imp().routes.borrow_mut();
+                        if index < routes.len() {
+                            routes.remove(index);
+                        }
+                    }
+                    obj.refresh_routes();
+                }
+            ));
+
+            row.add_suffix(&delete_button);
+            row.connect_activated(glib::clone!(
+                #[weak(rename_to = obj)]
+                self,
+                move |_| {
+                    obj.open_route_dialog(Some(index));
+                }
+            ));
+
+            listbox.append(&row);
+        }
+    }
+
+    fn open_route_dialog(&self, index: Option<usize>) {
+        let imp = self.imp();
+        imp.editing_route_index.set(index);
+
+        match index.and_then(|i| imp.routes.borrow().get(i).cloned()) {
+            Some(route) => {
+                imp.route_name_entry.set_text(&route.name);
+                let parsed = url::Url::parse(&route.server).ok();
+                let (scheme, host) = parsed
+                    .as_ref()
+                    .map(|url| {
+                        (
+                            url.scheme().to_string(),
+                            url.host_str().unwrap_or("").to_string(),
+                        )
+                    })
+                    .unwrap_or_else(|| ("http".to_string(), route.server.clone()));
+                imp.route_protocol
+                    .set_selected(if scheme == "https" { 1 } else { 0 });
+                imp.route_server_entry.set_text(&host);
+                imp.route_port_entry.set_text(&route.port);
+                imp.route_path_entry
+                    .set_text(route.path.as_deref().unwrap_or(""));
+            }
+            None => {
+                imp.route_name_entry.set_text("");
+                imp.route_server_entry.set_text("");
+                imp.route_protocol.set_selected(0);
+                imp.route_port_entry.set_text("");
+                imp.route_path_entry.set_text("");
+            }
+        }
+
+        imp.route_dialog.present(Some(self));
+    }
+
+    #[template_callback]
+    fn on_add_route_clicked(&self) {
+        self.open_route_dialog(None);
+    }
+
+    #[template_callback]
+    fn on_route_save_clicked(&self) {
+        let imp = self.imp();
+        let name = imp.route_name_entry.text().trim().to_string();
+        let host = imp.route_server_entry.text().trim().to_string();
+        let port = imp.route_port_entry.text().trim().to_string();
+        let path_text = imp.route_path_entry.text().trim().to_string();
+        let scheme = if imp.route_protocol.selected() == 1 {
+            "https://"
+        } else {
+            "http://"
+        };
+
+        if name.is_empty() || host.is_empty() || port.is_empty() {
+            self.toast(gettext("Name, server and port are required"));
+            return;
+        }
+
+        let server = if host.starts_with("http://") || host.starts_with("https://") {
+            host
+        } else {
+            format!("{scheme}{host}")
+        };
+
+        let path = if path_text.is_empty() {
+            None
+        } else {
+            Some(path_text.trim_matches('/').to_string())
+        };
+
+        let route = Route {
+            name,
+            server,
+            port,
+            path,
+        };
+
+        {
+            let mut routes = imp.routes.borrow_mut();
+            match imp.editing_route_index.get() {
+                Some(index) if index < routes.len() => routes[index] = route,
+                _ => routes.push(route),
+            }
+        }
+
+        imp.editing_route_index.set(None);
+        imp.route_dialog.close();
+        self.refresh_routes();
     }
 }

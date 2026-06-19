@@ -372,6 +372,18 @@ msgstr "正在扫描..."
 msgid "No overview"
 msgstr "无概览"
 
+#: src/ui/widgets/window.rs:564
+msgid "Failed to save account"
+msgstr "保存账户失败"
+
+#: src/ui/widgets/window.rs:573
+msgid "Failed to switch route"
+msgstr "切换线路失败"
+
+#: src/ui/widgets/account_add.rs:446
+msgid "Name, server and port are required"
+msgstr "名称、服务器和端口不能为空"
+
 #: src/ui/widgets/server_action_row.rs:129
 msgid "Edit Server"
 msgstr "编辑服务器"
@@ -522,16 +534,58 @@ msgid "Port"
 msgstr "端口"
 
 #: resources/ui/account.ui:92
+msgid "Route Name (optional, e.g. \"LAN\", \"WAN\")"
+msgstr "线路名称（可选，例如 \"LAN\"、\"WAN\"）"
+
+#: resources/ui/account.ui:97 resources/ui/account.ui:279
+msgid "URL Path Prefix (optional, e.g. for reverse proxy)"
+msgstr "URL 路径前缀（可选，例如反向代理）"
+
+#: resources/ui/account.ui:102
 msgid "Username"
 msgstr "用户名"
 
-#: resources/ui/account.ui:97
+#: resources/ui/account.ui:107
 msgid "Password"
 msgstr "密码"
 
-#: resources/ui/account.ui:108 resources/ui/account_settings.ui:521
+#: resources/ui/account.ui:116
+msgid "Additional Routes"
+msgstr "额外线路"
+
+#: resources/ui/account.ui:117
+msgid "Alternative network routes. You can switch between them after logging in."
+msgstr "备用网络线路。登录后可以在它们之间切换。"
+
+#: resources/ui/account.ui:120 resources/ui/account.ui:163
+#: resources/ui/account_settings.ui:521
 msgid "Add"
 msgstr "添加"
+
+#: resources/ui/account.ui:122
+msgid "Add Route"
+msgstr "添加线路"
+
+#: resources/ui/account.ui:136
+msgid "No additional routes"
+msgstr "暂无额外线路"
+
+#: resources/ui/account.ui:137
+msgid "Click the Add button to add a route."
+msgstr "点击添加按钮来添加线路。"
+
+#: resources/ui/account.ui:208 resources/ui/item.ui:269
+#: src/ui/widgets/route_switcher.rs:38 src/ui/widgets/route_switcher.rs:75
+msgid "Route"
+msgstr "线路"
+
+#: resources/ui/item.ui:260
+msgid "Route: "
+msgstr "线路： "
+
+#: resources/ui/item.ui:270 resources/ui/window.ui:235
+msgid "Switch Route"
+msgstr "切换线路"
 
 #: resources/ui/account_settings.ui:4
 msgid "Settings"
