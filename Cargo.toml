@@ -69,6 +69,7 @@ render = []                       # Enable custom rendering
 build_libmpv = []                 # build libmpv automatically, provided MPV_SOURCE is set
 
 [target.'cfg(target_os = "linux")'.dependencies]
+dandanapi = { git = "https://github.com/sukanka/dandanapi.git" }
 mutsumi = { git = "https://github.com/tsukinaha/mutsumi.git" }
 mpris-server = "0.10"
 xattr = { version = "1.6.1" }

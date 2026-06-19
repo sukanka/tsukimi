@@ -602,7 +602,37 @@ impl MPVVideo {
         }
     }
 
-    fn clear_danmaku(&self) {
+    #[cfg(target_os = "linux")]
+    pub fn load_danmaku_items(&self, items: Vec<mutsumi::Danmaku>) {
+        self.imp().danmaku_url.take();
+        self.imp().danmaku_loaded.set(false);
+        self.stop_danmaku();
+
+        let count = items.len();
+        #[cfg(target_os = "linux")]
+        if let Some(danmaku) = self.danmaku() {
+            danmaku.load_danmaku(items);
+            danmaku.preroll_seek(self.imp().last_position.get() * 1000.0);
+            self.imp().danmaku_loaded.set(count > 0);
+            self.sync_danmaku_playback();
+        }
+    }
+
+    pub fn set_danmaku_opacity(&self, value: f64) {
+        #[cfg(target_os = "linux")]
+        if let Some(danmaku) = self.danmaku() {
+            danmaku.set_opacity(value);
+        }
+    }
+
+    pub fn set_danmaku_speed(&self, value: f64) {
+        #[cfg(target_os = "linux")]
+        if let Some(danmaku) = self.danmaku() {
+            danmaku.set_speed_factor(value as f32);
+        }
+    }
+
+    pub fn clear_danmaku(&self) {
         self.imp().danmaku_url.take();
         self.imp().danmaku_loaded.set(false);
         self.stop_danmaku();
