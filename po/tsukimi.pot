@@ -482,7 +482,8 @@ msgstr ""
 msgid "Enter the server details below."
 msgstr ""
 
-#: resources/ui/account.ui:48 resources/ui/identify_dialog.ui:74
+#: resources/ui/account.ui:48 resources/ui/account_settings.ui:368
+#: resources/ui/identify_dialog.ui:74
 #: resources/ui/other.ui:54
 msgid "Name"
 msgstr ""
@@ -520,7 +521,7 @@ msgid "Alternative network routes. You can switch between them after logging in.
 msgstr ""
 
 #: resources/ui/account.ui:120 resources/ui/account.ui:163
-#: resources/ui/account_settings.ui:521
+#: resources/ui/account_settings.ui:380 resources/ui/account_settings.ui:577
 msgid "Add"
 msgstr ""
 
@@ -654,11 +655,11 @@ msgstr ""
 msgid "Clear Cache"
 msgstr ""
 
-#: resources/ui/account_settings.ui:231 resources/ui/account_settings.ui:350
+#: resources/ui/account_settings.ui:231 resources/ui/account_settings.ui:406
 msgid "Others"
 msgstr ""
 
-#: resources/ui/account_settings.ui:234 resources/ui/account_settings.ui:426
+#: resources/ui/account_settings.ui:234 resources/ui/account_settings.ui:482
 msgid "Preferred Video Version"
 msgstr ""
 
@@ -719,90 +720,146 @@ msgstr ""
 msgid "Config dir"
 msgstr ""
 
+#: resources/ui/account_settings.ui:350
+msgid "Danmaku"
+msgstr ""
+
 #: resources/ui/account_settings.ui:355
-msgid "Video Output"
+msgid "DanDanPlay API"
 msgstr ""
 
 #: resources/ui/account_settings.ui:356
-msgid "Only for debugging"
+msgid "Custom servers compatible with dandanplay API protocol"
 msgstr ""
 
 #: resources/ui/account_settings.ui:359
+msgid "Active Server"
+msgstr ""
+
+#: resources/ui/account_settings.ui:365 src/ui/widgets/account_settings.rs:843
+msgid "Add Custom Server"
+msgstr ""
+
+#: resources/ui/account_settings.ui:374
+msgid "URL"
+msgstr ""
+
+#: resources/ui/account_settings.ui:392
+msgid "Remove Selected Server"
+msgstr ""
+
+#: src/ui/widgets/account_settings.rs:797
+msgid "Default (api.dandanplay.net)"
+msgstr ""
+
+#: src/ui/widgets/account_settings.rs:825
+msgid "Update"
+msgstr ""
+
+#: src/ui/widgets/account_settings.rs:831
+msgid "Edit Custom Server"
+msgstr ""
+
+#: src/ui/widgets/account_settings.rs:874
+msgid "Please fill in both name and URL."
+msgstr ""
+
+#: src/ui/widgets/account_settings.rs:884
+msgid "No changes detected."
+msgstr ""
+
+#: src/ui/widgets/account_settings.rs:891
+msgid "Failed to update server."
+msgstr ""
+
+#: src/ui/widgets/account_settings.rs:895
+msgid "Failed to save server."
+msgstr ""
+
+#: resources/ui/account_settings.ui:411
+msgid "Video Output"
+msgstr ""
+
+#: resources/ui/account_settings.ui:412
+msgid "Only for debugging"
+msgstr ""
+
+#: resources/ui/account_settings.ui:415
 msgid "libmpv (default)"
 msgstr ""
 
-#: resources/ui/account_settings.ui:404
+#: resources/ui/account_settings.ui:460
 msgid "Preferred Version"
 msgstr ""
 
-#: resources/ui/account_settings.ui:427
+#: resources/ui/account_settings.ui:483
 msgid ""
 "Weight is ordered from high to low, until a specific version is matched, or "
 "the highest matching version is obtained before clearing the match list"
 msgstr ""
 
-#: resources/ui/account_settings.ui:442
+#: resources/ui/account_settings.ui:498
 msgid "Descriptors"
 msgstr ""
 
-#: resources/ui/account_settings.ui:464
+#: resources/ui/account_settings.ui:520
 msgid "It is recommended to set no more than 3 lines"
 msgstr ""
 
-#: resources/ui/account_settings.ui:485
+#: resources/ui/account_settings.ui:541
 msgid "No Descriptors"
 msgstr ""
 
-#: resources/ui/account_settings.ui:504
+#: resources/ui/account_settings.ui:560
 msgid "Add a descriptor"
 msgstr ""
 
-#: resources/ui/account_settings.ui:546 resources/ui/account_settings.ui:656
+#: resources/ui/account_settings.ui:602 resources/ui/account_settings.ui:712
 msgid "This will use exact matching to obtain a list"
 msgstr ""
 
-#: resources/ui/account_settings.ui:549 resources/ui/account_settings.ui:659
+#: resources/ui/account_settings.ui:605 resources/ui/account_settings.ui:715
 msgid "Descriptor Type"
 msgstr ""
 
-#: resources/ui/account_settings.ui:554 resources/ui/account_settings.ui:664
+#: resources/ui/account_settings.ui:610 resources/ui/account_settings.ui:720
 msgid "String"
 msgstr ""
 
-#: resources/ui/account_settings.ui:555 resources/ui/account_settings.ui:665
+#: resources/ui/account_settings.ui:611 resources/ui/account_settings.ui:721
 msgid "Regular Expression"
 msgstr ""
 
-#: resources/ui/account_settings.ui:567 resources/ui/account_settings.ui:677
+#: resources/ui/account_settings.ui:623 resources/ui/account_settings.ui:733
 msgid "Descriptor"
 msgstr ""
 
-#: resources/ui/account_settings.ui:572 resources/ui/account_settings.ui:682
+#: resources/ui/account_settings.ui:628 resources/ui/account_settings.ui:738
 msgid "Descriptor should not be too long"
 msgstr ""
 
-#: resources/ui/account_settings.ui:583 resources/ui/account_settings.ui:693
+#: resources/ui/account_settings.ui:639 resources/ui/account_settings.ui:749
 msgid "eg. 1080p"
 msgstr ""
 
-#: resources/ui/account_settings.ui:594 resources/ui/account_settings.ui:704
+#: resources/ui/account_settings.ui:650 resources/ui/account_settings.ui:760
 msgid "eg. 1080p.*WebDL"
 msgstr ""
 
-#: resources/ui/account_settings.ui:614
+#: resources/ui/account_settings.ui:670
 msgid "Edit descriptor"
 msgstr ""
 
-#: resources/ui/account.ui:225 resources/ui/account_settings.ui:631
+#: resources/ui/account.ui:225 resources/ui/account_settings.ui:687
 #: resources/ui/image_dialog_edit_page.ui:37
 msgid "Save"
 msgstr ""
 
-#: resources/ui/account_settings.ui:724
+#: resources/ui/account_settings.ui:780
 msgid "Change folder"
 msgstr ""
 
-#: resources/ui/account_settings.ui:726
+#: resources/ui/account_settings.ui:782
 msgid "Select new mpv config folder"
 msgstr ""
 

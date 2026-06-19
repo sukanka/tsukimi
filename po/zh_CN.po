@@ -520,7 +520,8 @@ msgstr "添加一个新服务器"
 msgid "Enter the server details below."
 msgstr "在下面填入服务器的信息。"
 
-#: resources/ui/account.ui:48 resources/ui/identify_dialog.ui:74
+#: resources/ui/account.ui:48 resources/ui/account_settings.ui:368
+#: resources/ui/identify_dialog.ui:74
 #: resources/ui/other.ui:54
 msgid "Name"
 msgstr "名称"
@@ -558,7 +559,7 @@ msgid "Alternative network routes. You can switch between them after logging in.
 msgstr "备用网络线路。登录后可以在它们之间切换。"
 
 #: resources/ui/account.ui:120 resources/ui/account.ui:163
-#: resources/ui/account_settings.ui:521
+#: resources/ui/account_settings.ui:380 resources/ui/account_settings.ui:577
 msgid "Add"
 msgstr "添加"
 
@@ -692,11 +693,11 @@ msgstr "缓存"
 msgid "Clear Cache"
 msgstr "清除缓存"
 
-#: resources/ui/account_settings.ui:231 resources/ui/account_settings.ui:350
+#: resources/ui/account_settings.ui:231 resources/ui/account_settings.ui:406
 msgid "Others"
 msgstr "其他"
 
-#: resources/ui/account_settings.ui:234 resources/ui/account_settings.ui:426
+#: resources/ui/account_settings.ui:234 resources/ui/account_settings.ui:482
 msgid "Preferred Video Version"
 msgstr "首选视频版本"
 
@@ -757,91 +758,147 @@ msgstr "启用外部 mpv 配置"
 msgid "Config dir"
 msgstr "配置目录"
 
+#: resources/ui/account_settings.ui:350
+msgid "Danmaku"
+msgstr "弹幕"
+
 #: resources/ui/account_settings.ui:355
+msgid "DanDanPlay API"
+msgstr "DanDanPlay 接口"
+
+#: resources/ui/account_settings.ui:356
+msgid "Custom servers compatible with dandanplay API protocol"
+msgstr "自定义兼容 DanDanPlay API 协议的服务器"
+
+#: resources/ui/account_settings.ui:359
+msgid "Active Server"
+msgstr "当前服务器"
+
+#: resources/ui/account_settings.ui:365 src/ui/widgets/account_settings.rs:843
+msgid "Add Custom Server"
+msgstr "添加自定义服务器"
+
+#: resources/ui/account_settings.ui:374
+msgid "URL"
+msgstr "URL"
+
+#: resources/ui/account_settings.ui:392
+msgid "Remove Selected Server"
+msgstr "删除选中服务器"
+
+#: src/ui/widgets/account_settings.rs:797
+msgid "Default (api.dandanplay.net)"
+msgstr "默认 (api.dandanplay.net)"
+
+#: src/ui/widgets/account_settings.rs:825
+msgid "Update"
+msgstr "更新"
+
+#: src/ui/widgets/account_settings.rs:831
+msgid "Edit Custom Server"
+msgstr "编辑自定义服务器"
+
+#: src/ui/widgets/account_settings.rs:874
+msgid "Please fill in both name and URL."
+msgstr "请同时填写名称和 URL。"
+
+#: src/ui/widgets/account_settings.rs:884
+msgid "No changes detected."
+msgstr "未检测到更改。"
+
+#: src/ui/widgets/account_settings.rs:891
+msgid "Failed to update server."
+msgstr "更新服务器失败。"
+
+#: src/ui/widgets/account_settings.rs:895
+msgid "Failed to save server."
+msgstr "保存服务器失败。"
+
+#: resources/ui/account_settings.ui:411
 msgid "Video Output"
 msgstr "视频输出"
 
-#: resources/ui/account_settings.ui:356
+#: resources/ui/account_settings.ui:412
 msgid "Only for debugging"
 msgstr "仅用于调试"
 
-#: resources/ui/account_settings.ui:359
+#: resources/ui/account_settings.ui:415
 msgid "libmpv (default)"
 msgstr "libmpv (默认)"
 
-#: resources/ui/account_settings.ui:404
+#: resources/ui/account_settings.ui:460
 msgid "Preferred Version"
 msgstr "首选版本"
 
-#: resources/ui/account_settings.ui:427
+#: resources/ui/account_settings.ui:483
 msgid ""
 "Weight is ordered from high to low, until a specific version is matched, or "
 "the highest matching version is obtained before clearing the match list"
 msgstr ""
 "权重从高到低排序，直到匹配到特定版本，或在清除匹配列表前获得最高匹配版本为止"
 
-#: resources/ui/account_settings.ui:442
+#: resources/ui/account_settings.ui:498
 msgid "Descriptors"
 msgstr "描述符"
 
-#: resources/ui/account_settings.ui:464
+#: resources/ui/account_settings.ui:520
 msgid "It is recommended to set no more than 3 lines"
 msgstr "建议设置不超过 3 行"
 
-#: resources/ui/account_settings.ui:485
+#: resources/ui/account_settings.ui:541
 msgid "No Descriptors"
 msgstr "无描述符"
 
-#: resources/ui/account_settings.ui:504
+#: resources/ui/account_settings.ui:560
 msgid "Add a descriptor"
 msgstr "添加描述符"
 
-#: resources/ui/account_settings.ui:546 resources/ui/account_settings.ui:656
+#: resources/ui/account_settings.ui:602 resources/ui/account_settings.ui:712
 msgid "This will use exact matching to obtain a list"
 msgstr "这将使用精确匹配来获取列表"
 
-#: resources/ui/account_settings.ui:549 resources/ui/account_settings.ui:659
+#: resources/ui/account_settings.ui:605 resources/ui/account_settings.ui:715
 msgid "Descriptor Type"
 msgstr "描述符类型"
 
-#: resources/ui/account_settings.ui:554 resources/ui/account_settings.ui:664
+#: resources/ui/account_settings.ui:610 resources/ui/account_settings.ui:720
 msgid "String"
 msgstr "字符串"
 
-#: resources/ui/account_settings.ui:555 resources/ui/account_settings.ui:665
+#: resources/ui/account_settings.ui:611 resources/ui/account_settings.ui:721
 msgid "Regular Expression"
 msgstr "正则表达式"
 
-#: resources/ui/account_settings.ui:567 resources/ui/account_settings.ui:677
+#: resources/ui/account_settings.ui:623 resources/ui/account_settings.ui:733
 msgid "Descriptor"
 msgstr "描述符"
 
-#: resources/ui/account_settings.ui:572 resources/ui/account_settings.ui:682
+#: resources/ui/account_settings.ui:628 resources/ui/account_settings.ui:738
 msgid "Descriptor should not be too long"
 msgstr "描述符不宜太长"
 
-#: resources/ui/account_settings.ui:583 resources/ui/account_settings.ui:693
+#: resources/ui/account_settings.ui:639 resources/ui/account_settings.ui:749
 msgid "eg. 1080p"
 msgstr "例如：1080p"
 
-#: resources/ui/account_settings.ui:594 resources/ui/account_settings.ui:704
+#: resources/ui/account_settings.ui:650 resources/ui/account_settings.ui:760
 msgid "eg. 1080p.*WebDL"
 msgstr "例如：1080p.*WebDL"
 
-#: resources/ui/account_settings.ui:614
+#: resources/ui/account_settings.ui:670
 msgid "Edit descriptor"
 msgstr "编辑描述符"
 
-#: resources/ui/account_settings.ui:631
+#: resources/ui/account_settings.ui:687
 #: resources/ui/image_dialog_edit_page.ui:37
 msgid "Save"
 msgstr "保存"
 
-#: resources/ui/account_settings.ui:724
+#: resources/ui/account_settings.ui:780
 msgid "Change folder"
 msgstr "修改文件夹"
 
-#: resources/ui/account_settings.ui:726
+#: resources/ui/account_settings.ui:782
 msgid "Select new mpv config folder"
 msgstr "选择 mpv 配置读取目录"
 
@@ -1931,9 +1988,6 @@ msgstr "服务器"
 
 #~ msgid "Not implemented"
 #~ msgstr "未实现"
-
-#~ msgid "Danmaku"
-#~ msgstr "弹幕"
 
 #~ msgid "No danmakus loaded"
 #~ msgstr "无弹幕加载"
