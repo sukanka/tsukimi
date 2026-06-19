@@ -197,6 +197,7 @@ pub enum ListenEvent {
     TimePos(i64),
     PausedForCache(bool),
     ChapterList(ChapterList),
+    DanmakuTimeline(Vec<f64>),
 }
 
 pub static MPV_EVENT_CHANNEL: Lazy<MPVEventChannel> = Lazy::new(|| {

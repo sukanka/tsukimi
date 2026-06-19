@@ -545,6 +545,9 @@ impl MPVVideo {
         self.imp().danmaku_url.replace(next_url.clone());
         self.imp().danmaku_loaded.set(false);
         self.stop_danmaku();
+        let _ = MPV_EVENT_CHANNEL
+            .tx
+            .send(ListenEvent::DanmakuTimeline(Vec::new()));
 
         #[cfg(target_os = "linux")]
         if let Some(danmaku) = self.danmaku() {
@@ -563,6 +566,7 @@ impl MPVVideo {
                         Ok(content) => match mutsumi::parse_bilibili_xml(&content) {
                             Ok(danmaku_items) => {
                                 let count = danmaku_items.len();
+                                let timeline = danmaku_timeline(&danmaku_items);
                                 if obj.imp().danmaku_url.borrow().as_deref()
                                     != Some(external_url.as_str())
                                 {
@@ -574,6 +578,9 @@ impl MPVVideo {
                                     danmaku.preroll_seek(obj.imp().last_position.get() * 1000.0);
                                     obj.imp().danmaku_loaded.set(true);
                                     obj.sync_danmaku_playback();
+                                    let _ = MPV_EVENT_CHANNEL
+                                        .tx
+                                        .send(ListenEvent::DanmakuTimeline(timeline));
                                     tracing::info!(
                                         "Loaded danmaku track from {} ({} items)",
                                         external_url,
@@ -609,12 +616,15 @@ impl MPVVideo {
         self.stop_danmaku();
 
         let count = items.len();
-        #[cfg(target_os = "linux")]
+        let timeline = danmaku_timeline(&items);
         if let Some(danmaku) = self.danmaku() {
             danmaku.load_danmaku(items);
             danmaku.preroll_seek(self.imp().last_position.get() * 1000.0);
             self.imp().danmaku_loaded.set(count > 0);
             self.sync_danmaku_playback();
+            let _ = MPV_EVENT_CHANNEL
+                .tx
+                .send(ListenEvent::DanmakuTimeline(timeline));
         }
     }
 
@@ -636,6 +646,9 @@ impl MPVVideo {
         self.imp().danmaku_url.take();
         self.imp().danmaku_loaded.set(false);
         self.stop_danmaku();
+        let _ = MPV_EVENT_CHANNEL
+            .tx
+            .send(ListenEvent::DanmakuTimeline(Vec::new()));
 
         #[cfg(target_os = "linux")]
         if let Some(danmaku) = self.danmaku() {
@@ -891,6 +904,20 @@ fn convert_mutsumi_danmaku_track(value: mutsumi::DanmakuTrack) -> DanmakuTrack {
     DanmakuTrack {
         external_url: value.external_url,
     }
+}
+
+#[cfg(target_os = "linux")]
+fn danmaku_timeline(items: &[mutsumi::Danmaku]) -> Vec<f64> {
+    items
+        .iter()
+        .filter_map(|item| {
+            if item.start.is_finite() && item.start >= 0.0 {
+                Some(item.start / 1000.0)
+            } else {
+                None
+            }
+        })
+        .collect()
 }
 
 #[cfg(target_os = "linux")]
