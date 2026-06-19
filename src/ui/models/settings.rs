@@ -62,6 +62,8 @@ impl Settings {
     const KEY_WINDOW_HEIGHT: &'static str = "window-height"; // i32
     const KEY_IS_MAXIMIZED: &'static str = "is-maximized"; // bool
     const KEY_IS_FULLSCREEN: &'static str = "is-fullscreen"; // bool
+    const KEY_DANMAKU_OPACITY: &'static str = "danmaku-opacity"; // f64
+    const KEY_IS_DANMAKU_ENABLED: &'static str = "is-danmaku-enabled"; // bool
 
     pub fn is_overlay(&self) -> bool {
         self.boolean(Self::KEY_IS_OVERLAY)
@@ -129,6 +131,14 @@ impl Settings {
 
     pub fn mpv_video_scale(&self) -> i32 {
         self.int(Self::KEY_MPV_VIDEO_SCALE)
+    }
+
+    pub fn danmaku_opacity(&self) -> f64 {
+        self.double(Self::KEY_DANMAKU_OPACITY)
+    }
+
+    pub fn is_danmaku_enabled(&self) -> bool {
+        self.boolean(Self::KEY_IS_DANMAKU_ENABLED)
     }
 
     pub fn mpv_audio_channel(&self) -> i32 {
