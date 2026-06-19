@@ -42,6 +42,10 @@ mod track_list;
 
 impl MPVPage {
     pub async fn initialize_mpris(&self, app_id: &str) -> Result<()> {
+        if self.imp().mpris_server.get().is_some() {
+            return Err(anyhow::anyhow!("Mpris server already initialized"));
+        }
+
         let server = LocalServer::new_with_track_list(app_id, self.imp().obj().clone()).await?;
         self.imp()
             .mpris_server
