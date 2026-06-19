@@ -20,6 +20,7 @@ use super::options_matcher::{
 use crate::ui::{
     GlobalToast,
     models::SETTINGS,
+    mpv::video::MPVVideo,
 };
 
 mod imp {
@@ -27,14 +28,13 @@ mod imp {
     use gtk::glib;
 
     use super::*;
-    use crate::ui::mpv::mpvglarea::MPVGLArea;
 
     #[derive(Debug, Default, CompositeTemplate, glib::Properties)]
     #[template(resource = "/moe/tsuna/tsukimi/ui/mpv_control_sidebar.ui")]
     #[properties(wrapper_type = super::MPVControlSidebar)]
     pub struct MPVControlSidebar {
         #[property(get, set = Self::set_player, explicit_notify, nullable)]
-        pub player: glib::WeakRef<MPVGLArea>,
+        pub player: glib::WeakRef<MPVVideo>,
 
         #[template_child]
         pub playback_speed_adj: TemplateChild<gtk::Adjustment>,
@@ -144,7 +144,7 @@ mod imp {
     impl NavigationPageImpl for MPVControlSidebar {}
 
     impl MPVControlSidebar {
-        fn set_player(&self, player: Option<MPVGLArea>) {
+        fn set_player(&self, player: Option<MPVVideo>) {
             if self.player.upgrade() == player {
                 return;
             }
@@ -356,7 +356,7 @@ impl MPVControlSidebar {
 
     pub fn set_mpv_property<V>(&self, property: &str, value: V)
     where
-        V: SetData + Send + 'static,
+        V: SetData + Send + ToString + 'static,
     {
         if let Some(player) = self.player() {
             player.set_property(property, value)

@@ -43,6 +43,7 @@ impl std::fmt::Debug for TsukimiMPV {
     }
 }
 
+#[derive(Clone, Copy)]
 pub enum TrackSelection {
     Track(i64),
     None,
@@ -529,6 +530,21 @@ impl TsukimiMPV {
 
 unsafe impl Send for TsukimiMPV {}
 unsafe impl Sync for TsukimiMPV {}
+
+pub fn should_use_mutsumi_embed() -> bool {
+    SETTINGS.mpv_video_output() != 0 && is_wayland_session()
+}
+
+fn is_wayland_session() -> bool {
+    #[cfg(target_os = "linux")]
+    {
+        std::env::var_os("WAYLAND_DISPLAY").is_some()
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        false
+    }
+}
 
 pub struct MpvTracks {
     pub audio_tracks: Vec<MpvTrack>,
