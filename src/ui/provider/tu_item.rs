@@ -193,6 +193,8 @@ pub mod imp {
         #[property(get, set, nullable)]
         end_date: RefCell<Option<DateTime>>,
         #[property(get, set, nullable)]
+        date_created: RefCell<Option<DateTime>>,
+        #[property(get, set, nullable)]
         overview: RefCell<Option<String>>,
         #[property(get, set, nullable)]
         tagline: RefCell<Option<String>>,
