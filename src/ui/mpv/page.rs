@@ -23,6 +23,49 @@ use gtk::{
 };
 use itertools::Itertools;
 
+#[cfg(target_os = "linux")]
+#[derive(Clone, Debug, serde::Serialize)]
+struct DanmakuEpisodeSearchParams {
+    #[serde(rename = "anime", skip_serializing_if = "Option::is_none")]
+    anime: Option<String>,
+    #[serde(rename = "tmdbId", skip_serializing_if = "Option::is_none")]
+    tmdb_id: Option<i32>,
+    #[serde(rename = "episode", skip_serializing_if = "Option::is_none")]
+    episode: Option<String>,
+}
+
+#[cfg(target_os = "linux")]
+impl DanmakuEpisodeSearchParams {
+    fn new(anime: String, episode: String, tmdb_id: Option<i32>) -> Self {
+        Self {
+            anime: Self::non_empty_param(anime),
+            tmdb_id,
+            episode: Self::non_empty_param(episode),
+        }
+    }
+
+    fn non_empty_param(value: String) -> Option<String> {
+        let value = value.trim();
+        (!value.is_empty()).then(|| value.to_string())
+    }
+}
+
+#[cfg(target_os = "linux")]
+struct DanmakuEpisodes(DanmakuEpisodeSearchParams);
+
+#[cfg(target_os = "linux")]
+impl dandanapi::Request for DanmakuEpisodes {
+    type Response = dandanapi::SearchEpisodesResponse;
+    type Body = ();
+    type Params = DanmakuEpisodeSearchParams;
+
+    const PATH: &'static str = "/api/v2/search/episodes";
+
+    fn params(&self) -> Option<&Self::Params> {
+        Some(&self.0)
+    }
+}
+
 use super::{
     tsukimi_mpv::{
         ChapterList,
@@ -83,6 +126,12 @@ use crate::client::{
 const MIN_MOTION_TIME: i64 = 100000;
 const PREV_CHAPTER_KEYVAL: u32 = 65366;
 const NEXT_CHAPTER_KEYVAL: u32 = 65365;
+#[cfg(target_os = "linux")]
+const DANMAKU_AUTO_ANIME_NAME_LIMIT: usize = 3;
+#[cfg(target_os = "linux")]
+const DANMAKU_MANUAL_ANIME_NAME_LIMIT: usize = 2;
+#[cfg(target_os = "linux")]
+const DANMAKU_ANIME_CONTEXT_LIMIT: usize = 80;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct PlaybackDirectMode {
@@ -142,10 +191,12 @@ impl MpvTrackKind {
 }
 
 mod imp {
-
-    use std::cell::{
-        Cell,
-        RefCell,
+    use std::{
+        cell::{
+            Cell,
+            RefCell,
+        },
+        collections::HashMap,
     };
 
     use adw::prelude::*;
@@ -305,6 +356,20 @@ mod imp {
         pub danmaku_list: RefCell<Option<Vec<mutsumi::Danmaku>>>,
         #[cfg(target_os = "linux")]
         pub danmaku_search_generation: Cell<u64>,
+        #[cfg(target_os = "linux")]
+        pub danmaku_anime_candidates: RefCell<Vec<String>>,
+        #[cfg(target_os = "linux")]
+        pub danmaku_anime_candidate_button: RefCell<Option<gtk::MenuButton>>,
+        #[cfg(target_os = "linux")]
+        pub danmaku_anime_candidate_popover: RefCell<Option<gtk::Popover>>,
+        #[cfg(target_os = "linux")]
+        pub danmaku_anime_candidate_list: RefCell<Option<gtk::ListBox>>,
+        #[cfg(target_os = "linux")]
+        pub danmaku_auto_anime_names: RefCell<HashMap<String, Vec<String>>>,
+        #[cfg(target_os = "linux")]
+        pub danmaku_manual_anime_names: RefCell<HashMap<String, Vec<String>>>,
+        #[cfg(target_os = "linux")]
+        pub danmaku_anime_context_history: RefCell<Vec<String>>,
 
         #[property(get, set, default_value = true)]
         pub can_fade_cursor_set: Cell<bool>,
@@ -450,6 +515,7 @@ mod imp {
             #[cfg(target_os = "linux")]
             {
                 obj.init_dandanapi_client();
+                obj.setup_danmaku_anime_candidate_picker();
                 obj.rebuild_danmaku_server_list();
 
                 self.danmaku_popover.connect_show(glib::clone!(
@@ -633,12 +699,216 @@ impl MPVPage {
     }
 
     #[cfg(target_os = "linux")]
+    fn danmaku_context_key_for_item(item: &TuItem) -> String {
+        item.series_id().unwrap_or_else(|| item.id())
+    }
+
+    #[cfg(target_os = "linux")]
+    fn danmaku_context_key(&self) -> Option<String> {
+        self.current_video()
+            .map(|item| Self::danmaku_context_key_for_item(&item))
+    }
+
+    #[cfg(target_os = "linux")]
+    fn push_unique_danmaku_anime_candidate(candidates: &mut Vec<String>, value: &str) {
+        let value = value.trim();
+        if value.is_empty() || candidates.iter().any(|candidate| candidate == value) {
+            return;
+        }
+
+        candidates.push(value.to_string());
+    }
+
+    #[cfg(target_os = "linux")]
+    fn base_danmaku_anime_candidates(&self, item: &TuItem) -> Vec<String> {
+        let mut candidates = Vec::new();
+
+        if item.item_type() == "Episode" {
+            if let Some(series_name) = item.series_name() {
+                Self::push_unique_danmaku_anime_candidate(&mut candidates, &series_name);
+            }
+        } else {
+            Self::push_unique_danmaku_anime_candidate(&mut candidates, &item.name());
+        }
+
+        candidates
+    }
+
+    #[cfg(target_os = "linux")]
+    fn setup_danmaku_anime_candidate_picker(&self) {
+        let imp = self.imp();
+        if imp.danmaku_anime_candidate_button.borrow().is_some() {
+            return;
+        }
+
+        let list = gtk::ListBox::builder()
+            .selection_mode(gtk::SelectionMode::None)
+            .margin_top(6)
+            .margin_bottom(6)
+            .margin_start(6)
+            .margin_end(6)
+            .build();
+        list.add_css_class("boxed-list");
+
+        let popover = gtk::Popover::new();
+        popover.set_child(Some(&list));
+
+        let button = gtk::MenuButton::builder()
+            .icon_name("pan-down-symbolic")
+            .tooltip_text(gettext("Show anime name candidates"))
+            .valign(gtk::Align::Center)
+            .visible(false)
+            .build();
+        button.add_css_class("flat");
+        button.set_popover(Some(&popover));
+
+        imp.danmaku_anime_row.add_suffix(&button);
+        imp.danmaku_anime_candidate_button.replace(Some(button));
+        imp.danmaku_anime_candidate_popover.replace(Some(popover));
+        imp.danmaku_anime_candidate_list.replace(Some(list));
+    }
+
+    #[cfg(target_os = "linux")]
+    fn rebuild_danmaku_anime_candidate_picker(&self, candidates: &[String]) {
+        let imp = self.imp();
+        if let Some(button) = imp.danmaku_anime_candidate_button.borrow().as_ref() {
+            button.set_visible(candidates.len() > 1);
+        }
+
+        let Some(list) = imp.danmaku_anime_candidate_list.borrow().as_ref().cloned() else {
+            return;
+        };
+
+        while let Some(child) = list.first_child() {
+            list.remove(&child);
+        }
+
+        let current_anime = imp.danmaku_anime_row.text().trim().to_string();
+        for candidate in candidates {
+            let row = adw::ActionRow::new();
+            row.set_title(&glib::markup_escape_text(candidate));
+            row.set_activatable(true);
+
+            let selected_icon = gtk::Image::from_icon_name("object-select-symbolic");
+            selected_icon.set_visible(candidate == &current_anime);
+            row.add_suffix(&selected_icon);
+
+            let candidate = candidate.clone();
+            row.connect_activated(glib::clone!(
+                #[weak(rename_to = obj)]
+                self,
+                move |_| {
+                    obj.imp().danmaku_anime_row.set_text(&candidate);
+                    if let Some(popover) =
+                        obj.imp().danmaku_anime_candidate_popover.borrow().as_ref()
+                    {
+                        popover.popdown();
+                    }
+                }
+            ));
+
+            list.append(&row);
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    fn set_danmaku_anime_candidates(&self, candidates: Vec<String>) {
+        self.rebuild_danmaku_anime_candidate_picker(&candidates);
+        let imp = self.imp();
+        imp.danmaku_anime_candidates.replace(candidates);
+    }
+
+    #[cfg(target_os = "linux")]
+    fn touch_danmaku_anime_context(&self, context_key: &str) {
+        let mut context_history = self.imp().danmaku_anime_context_history.borrow_mut();
+        context_history.retain(|stored_key| stored_key != context_key);
+        context_history.insert(0, context_key.to_string());
+        while context_history.len() > DANMAKU_ANIME_CONTEXT_LIMIT {
+            if let Some(old_key) = context_history.pop() {
+                self.imp()
+                    .danmaku_auto_anime_names
+                    .borrow_mut()
+                    .remove(&old_key);
+                self.imp()
+                    .danmaku_manual_anime_names
+                    .borrow_mut()
+                    .remove(&old_key);
+            }
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    fn stored_danmaku_anime_candidates_for_context(&self, context_key: &str) -> Vec<String> {
+        let mut candidates = Vec::new();
+        if let Some(auto_names) = self
+            .imp()
+            .danmaku_auto_anime_names
+            .borrow()
+            .get(context_key)
+        {
+            for name in auto_names {
+                Self::push_unique_danmaku_anime_candidate(&mut candidates, name);
+            }
+        }
+        if let Some(manual_names) = self
+            .imp()
+            .danmaku_manual_anime_names
+            .borrow()
+            .get(context_key)
+        {
+            for name in manual_names {
+                Self::push_unique_danmaku_anime_candidate(&mut candidates, name);
+            }
+        }
+        candidates
+    }
+
+    #[cfg(target_os = "linux")]
+    fn remember_danmaku_auto_anime_candidates_for_context(
+        &self, context_key: &str, names: impl IntoIterator<Item = String>,
+    ) -> Vec<String> {
+        {
+            let mut auto_names = self.imp().danmaku_auto_anime_names.borrow_mut();
+            let history = auto_names.entry(context_key.to_string()).or_default();
+            for name in names {
+                Self::push_unique_danmaku_anime_candidate(history, &name);
+            }
+            history.truncate(DANMAKU_AUTO_ANIME_NAME_LIMIT);
+        }
+
+        self.touch_danmaku_anime_context(context_key);
+        self.stored_danmaku_anime_candidates_for_context(context_key)
+    }
+
+    #[cfg(target_os = "linux")]
+    fn remember_danmaku_manual_anime_candidate(&self, name: String) -> Vec<String> {
+        let Some(context_key) = self.danmaku_context_key() else {
+            return Vec::new();
+        };
+
+        {
+            let mut manual_names = self.imp().danmaku_manual_anime_names.borrow_mut();
+            let history = manual_names.entry(context_key.clone()).or_default();
+            let name = name.trim();
+            if !name.is_empty() {
+                history.retain(|stored_name| stored_name != name);
+                history.insert(0, name.to_string());
+                history.truncate(DANMAKU_MANUAL_ANIME_NAME_LIMIT);
+            }
+        }
+
+        self.touch_danmaku_anime_context(&context_key);
+        self.stored_danmaku_anime_candidates_for_context(&context_key)
+    }
+
+    #[cfg(target_os = "linux")]
     fn prepare_danmaku_popover(&self) {
         self.rebuild_danmaku_server_list();
 
         let Some(item) = self.current_video() else {
             return;
         };
+        let context_key = Self::danmaku_context_key_for_item(&item);
 
         let is_movie = item.item_type() == "Movie";
         let episode = if is_movie {
@@ -650,11 +920,14 @@ impl MPVPage {
         };
         self.imp().danmaku_episode_row.set_text(&episode);
 
-        if let Some(series_name) = item.series_name() {
-            self.imp().danmaku_anime_row.set_text(&series_name);
-        } else {
-            self.imp().danmaku_anime_row.set_text(&item.name());
-        }
+        let candidates = self.remember_danmaku_auto_anime_candidates_for_context(
+            &context_key,
+            self.base_danmaku_anime_candidates(&item),
+        );
+        self.imp()
+            .danmaku_anime_row
+            .set_text(candidates.first().map(String::as_str).unwrap_or_default());
+        self.set_danmaku_anime_candidates(candidates);
 
         self.imp().danmaku_tmdb_row.set_text("");
 
@@ -663,10 +936,19 @@ impl MPVPage {
             self,
             async move {
                 if let Some(tmdb_id) = obj.resolve_tmdb_id(item).await {
-                    obj.imp().danmaku_tmdb_row.set_text(&tmdb_id.to_string());
-                    if let Some(title) = obj.fetch_anime_title(tmdb_id).await {
-                        obj.imp().danmaku_anime_row.set_text(&title);
+                    if obj.danmaku_context_key().as_deref() != Some(context_key.as_str()) {
+                        return;
                     }
+
+                    obj.imp().danmaku_tmdb_row.set_text(&tmdb_id.to_string());
+                    let titles = obj.fetch_dandanplay_anime_title_candidates(tmdb_id).await;
+                    if obj.danmaku_context_key().as_deref() != Some(context_key.as_str()) {
+                        return;
+                    }
+
+                    let candidates = obj
+                        .remember_danmaku_auto_anime_candidates_for_context(&context_key, titles);
+                    obj.set_danmaku_anime_candidates(candidates);
                 }
             }
         ));
@@ -753,22 +1035,16 @@ impl MPVPage {
         } else {
             anime
         };
+        let request = DanmakuEpisodeSearchParams::new(search_anime, episode, tmdb_id);
 
         tracing::info!(
-            anime = search_anime,
-            episode,
-            ?tmdb_id,
+            anime = ?request.anime.as_deref(),
+            episode = ?request.episode.as_deref(),
+            tmdb_id = ?request.tmdb_id,
             "Auto danmaku search"
         );
 
-        match self
-            .search_danmaku_episodes(dandanapi::RequestEpisodes {
-                anime: search_anime,
-                episode,
-                tmdb_id,
-            })
-            .await
-        {
+        match self.search_danmaku_episodes(request).await {
             Ok(response) => {
                 if self.danmaku_request_is_stale(Some(&video_id)) {
                     return;
@@ -798,10 +1074,10 @@ impl MPVPage {
 
     #[cfg(target_os = "linux")]
     async fn search_danmaku_episodes(
-        &self, request: dandanapi::RequestEpisodes,
+        &self, request: DanmakuEpisodeSearchParams,
     ) -> Result<dandanapi::SearchEpisodesResponse> {
         let client = self.dandan_client()?;
-        let route = client.route(dandanapi::Episodes(request));
+        let route = client.route(DanmakuEpisodes(request));
         spawn_tokio(async move { Ok(route.await?) }).await
     }
 
@@ -881,19 +1157,30 @@ impl MPVPage {
     }
 
     #[cfg(target_os = "linux")]
-    async fn fetch_anime_title(&self, tmdb_id: i32) -> Option<String> {
-        let client = self.dandan_client().ok()?;
-        let route = client.route(dandanapi::Episodes(dandanapi::RequestEpisodes {
-            anime: String::new(),
-            episode: String::new(),
-            tmdb_id: Some(tmdb_id),
-        }));
+    async fn fetch_dandanplay_anime_title_candidates(&self, tmdb_id: i32) -> Vec<String> {
+        let Ok(client) = self.dandan_client() else {
+            return Vec::new();
+        };
+        let route = client.route(DanmakuEpisodes(DanmakuEpisodeSearchParams::new(
+            String::new(),
+            String::new(),
+            Some(tmdb_id),
+        )));
 
         spawn_tokio(async move {
-            let response = route.await.ok()?;
-            response.animes?.first()?.anime_title.clone().into()
+            let response = route.await?;
+            Ok::<_, anyhow::Error>(
+                response
+                    .animes
+                    .unwrap_or_default()
+                    .into_iter()
+                    .map(|anime| anime.anime_title)
+                    .unique()
+                    .collect(),
+            )
         })
         .await
+        .unwrap_or_default()
     }
 
     #[template_callback]
@@ -922,6 +1209,10 @@ impl MPVPage {
 
     #[template_callback]
     #[cfg(target_os = "linux")]
+    fn on_danmaku_anime_candidate_changed(&self, _pspec: glib::ParamSpec) {}
+
+    #[template_callback]
+    #[cfg(target_os = "linux")]
     async fn on_danmaku_search_clicked(&self) {
         if !self.key_vaild() {
             self.imp().danmaku_page.set_description(&gettext(
@@ -944,18 +1235,19 @@ impl MPVPage {
             .trim()
             .parse::<i32>()
             .ok();
+        let request = DanmakuEpisodeSearchParams::new(anime.clone(), episode, tmdb_id);
 
-        tracing::info!(anime, episode, ?tmdb_id, "Manual danmaku search");
+        tracing::info!(
+            anime = ?request.anime.as_deref(),
+            episode = ?request.episode.as_deref(),
+            tmdb_id = ?request.tmdb_id,
+            "Manual danmaku search"
+        );
         let search_generation = self.next_danmaku_search_generation();
+        let candidates = self.remember_danmaku_manual_anime_candidate(anime.clone());
+        self.set_danmaku_anime_candidates(candidates);
 
-        match self
-            .search_danmaku_episodes(dandanapi::RequestEpisodes {
-                anime,
-                episode,
-                tmdb_id,
-            })
-            .await
-        {
+        match self.search_danmaku_episodes(request).await {
             Ok(response) => {
                 if self.danmaku_search_is_stale(search_generation) {
                     return;
@@ -1222,6 +1514,10 @@ impl MPVPage {
     fn on_danmaku_switch_state_set(&self, _state: bool) -> bool {
         false
     }
+
+    #[template_callback]
+    #[cfg(not(target_os = "linux"))]
+    fn on_danmaku_anime_candidate_changed(&self, _pspec: glib::ParamSpec) {}
 
     #[template_callback]
     #[cfg(not(target_os = "linux"))]
