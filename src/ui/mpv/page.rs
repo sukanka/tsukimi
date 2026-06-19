@@ -15,7 +15,6 @@ use gtk::{
 use itertools::Itertools;
 
 use super::{
-    mpvglarea::MPVGLArea,
     tsukimi_mpv::{
         ChapterList,
         ListenEvent,
@@ -23,8 +22,8 @@ use super::{
         MpvTrack,
         MpvTracks,
         TrackSelection,
-        TsukimiMPV,
     },
+    video::MPVVideo,
     video_scale::VideoScale,
 };
 use crate::{
@@ -156,7 +155,7 @@ mod imp {
             mpv::{
                 VolumeBar,
                 menu_actions::MenuActions,
-                mpvglarea::MPVGLArea,
+                video::MPVVideo,
                 video_scale::VideoScale,
             },
             provider::tu_item::TuItem,
@@ -174,7 +173,7 @@ mod imp {
         #[property(get, set = Self::set_paused)]
         pub paused: Cell<bool>,
         #[template_child]
-        pub video: TemplateChild<MPVGLArea>,
+        pub video: TemplateChild<MPVVideo>,
         #[template_child]
         pub bottom_revealer: TemplateChild<gtk::Revealer>,
         #[template_child]
@@ -276,7 +275,7 @@ mod imp {
         type ParentType = adw::NavigationPage;
 
         fn class_init(klass: &mut Self::Class) {
-            MPVGLArea::ensure_type();
+            MPVVideo::ensure_type();
             VideoScale::ensure_type();
             VolumeBar::ensure_type();
             klass.bind_template();
@@ -488,7 +487,7 @@ impl MPVPage {
         // This ensures play() takes the full-reload path rather than the
         // fast resume path (which would fail because mpv.stop() unloaded it).
         self.imp().cached_video_id.replace(None);
-        self.mpv().stop();
+        self.imp().video.stop();
 
         spawn_g_timeout(glib::clone!(
             #[weak(rename_to = obj)]
@@ -533,7 +532,9 @@ impl MPVPage {
             .map(|t| format!("{title1} - {t}"))
             .unwrap_or_else(|| title1);
 
-        self.mpv().set_property("force-media-title", media_title);
+        self.imp()
+            .video
+            .set_property("force-media-title", media_title);
 
         let id = item.id();
         let series_id = item.series_id();
@@ -588,7 +589,7 @@ impl MPVPage {
                 // skip the network round-trips and just seek to the desired position.
                 {
                     let cached = imp.cached_video_id.borrow();
-                    if cached.as_deref() == Some(&id) {
+                    if cached.as_deref() == Some(&id) && imp.video.has_loaded_video() {
                         imp.spinner.set_visible(false);
                         imp.loading_box.set_visible(false);
                         imp.video.resume_cached(start_seconds);
@@ -1142,6 +1143,7 @@ impl MPVPage {
 
     fn on_file_loaded(&self) {
         let imp = self.imp();
+        imp.video.mark_loaded();
         imp.allow_fallback.set(false);
         // Mark the newly loaded video as cached so we can resume it later
         // without re-fetching from the network.
@@ -1332,7 +1334,10 @@ impl MPVPage {
         if x >= 0.0 && y >= 0.0 {
             let widget = self.pick(x, y, gtk::PickFlags::DEFAULT);
             if let Some(widget) = widget
-                && !widget.is::<MPVGLArea>()
+                && widget
+                    .ancestor(MPVVideo::static_type())
+                    .and_downcast::<MPVVideo>()
+                    .is_none()
             {
                 return false;
             }
@@ -1394,8 +1399,7 @@ impl MPVPage {
         self.remove_timeout();
         self.reset_skippable_segments();
 
-        let mpv = self.mpv();
-        mpv.pause(true);
+        self.imp().video.set_pause(true);
         // Keep the video loaded in mpv to preserve the demuxer cache.
         // Previously mpv.stop() was called here, which unloaded the file
         // and discarded the entire buffer, forcing a full re-buffer on resume.
@@ -1562,10 +1566,6 @@ impl MPVPage {
 
     pub fn chapter_next(&self) {
         self.key_pressed_cb(NEXT_CHAPTER_KEYVAL, gtk::gdk::ModifierType::empty());
-    }
-
-    pub fn mpv(&self) -> &TsukimiMPV {
-        self.imp().video.imp().mpv()
     }
 
     pub fn notify_playing(&self) {

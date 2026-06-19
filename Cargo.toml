@@ -69,6 +69,7 @@ render = []                       # Enable custom rendering
 build_libmpv = []                 # build libmpv automatically, provided MPV_SOURCE is set
 
 [target.'cfg(target_os = "linux")'.dependencies]
+mutsumi = { git = "https://github.com/tsukinaha/mutsumi.git" }
 mpris-server = "0.10"
 xattr = { version = "1.6.1" }
 gdk-x11 = { version = "0.11", package = "gdk4-x11", features = [
