@@ -1,6 +1,5 @@
 use std::{
     cell::RefCell,
-    collections::HashMap,
     sync::{
         Arc,
         atomic::AtomicU32,
@@ -12,13 +11,10 @@ use libmpv2::{
     GetData,
     Mpv,
     SetData,
-    events::{
-        EventContext,
-        PropertyData,
-    },
-    mpv_node::MpvNode,
+    events::PropertyData,
     render::RenderContext,
 };
+use serde_json::Value;
 use tracing::{
     debug,
     warn,
@@ -35,8 +31,8 @@ pub struct MpvTrack {
 }
 
 pub struct TsukimiMPV {
+    pub ctx: RefCell<Option<RenderContext<'static>>>,
     pub mpv: Arc<Mpv>,
-    pub ctx: RefCell<Option<RenderContext>>,
     pub event_thread_alive: Arc<AtomicU32>,
     pub event_handle: RefCell<Option<JoinHandle<()>>>,
 }
@@ -150,8 +146,8 @@ impl Default for TsukimiMPV {
         .expect("Failed to create mpv instance");
 
         Self {
-            mpv: Arc::new(mpv),
             ctx: RefCell::new(None),
+            mpv: Arc::new(mpv),
             event_thread_alive: Arc::new(AtomicU32::new(PAUSED)),
             event_handle: RefCell::new(None),
         }
@@ -343,39 +339,27 @@ impl TsukimiMPV {
 
     pub fn process_events(&self) {
         let mpv = Arc::clone(&self.mpv);
-        let mut event_context = EventContext::new(mpv.ctx);
-        event_context
-            .disable_deprecated_events()
+        mpv.disable_deprecated_events()
             .expect("failed to disable deprecated events.");
-        event_context
-            .observe_property("duration", libmpv2::Format::Double, 0)
+        mpv.observe_property("duration", libmpv2::Format::Double, 0)
             .unwrap();
-        event_context
-            .observe_property("pause", libmpv2::Format::Flag, 1)
+        mpv.observe_property("pause", libmpv2::Format::Flag, 1)
             .unwrap();
-        event_context
-            .observe_property("cache-speed", libmpv2::Format::Int64, 2)
+        mpv.observe_property("cache-speed", libmpv2::Format::Int64, 2)
             .unwrap();
-        event_context
-            .observe_property("track-list", libmpv2::Format::Node, 3)
+        mpv.observe_property("track-list", libmpv2::Format::String, 3)
             .unwrap();
-        event_context
-            .observe_property("paused-for-cache", libmpv2::Format::Flag, 4)
+        mpv.observe_property("paused-for-cache", libmpv2::Format::Flag, 4)
             .unwrap();
-        event_context
-            .observe_property("demuxer-cache-time", libmpv2::Format::Int64, 5)
+        mpv.observe_property("demuxer-cache-time", libmpv2::Format::Int64, 5)
             .unwrap();
-        event_context
-            .observe_property("time-pos", libmpv2::Format::Int64, 6)
+        mpv.observe_property("time-pos", libmpv2::Format::Int64, 6)
             .unwrap();
-        event_context
-            .observe_property("volume", libmpv2::Format::Int64, 7)
+        mpv.observe_property("volume", libmpv2::Format::Int64, 7)
             .unwrap();
-        event_context
-            .observe_property("chapter-list", libmpv2::Format::Node, 8)
+        mpv.observe_property("chapter-list", libmpv2::Format::String, 8)
             .unwrap();
-        event_context
-            .observe_property("speed", libmpv2::Format::Double, 9)
+        mpv.observe_property("speed", libmpv2::Format::Double, 9)
             .unwrap();
         let event_thread_alive = self.event_thread_alive.to_owned();
         let handle = std::thread::Builder::new()
@@ -389,7 +373,7 @@ impl TsukimiMPV {
                         _ => (),
                     }
 
-                    match event_context.wait_event(1000.0) {
+                    match mpv.wait_event(1000.0) {
                         Some(Ok(event)) => match event {
                             Event::PropertyChange { name, change, .. } => match name {
                                 "duration" => {
@@ -412,14 +396,14 @@ impl TsukimiMPV {
                                     }
                                 }
                                 "track-list" => {
-                                    if let PropertyData::Node(node) = change {
+                                    if let PropertyData::Str(node) = change {
                                         let _ = MPV_EVENT_CHANNEL
                                             .tx
                                             .send(ListenEvent::TrackList(node_to_tracks(node)));
                                     }
                                 }
                                 "chapter-list" => {
-                                    if let PropertyData::Node(node) = change {
+                                    if let PropertyData::Str(node) = change {
                                         let _ = MPV_EVENT_CHANNEL.tx.send(
                                             ListenEvent::ChapterList(node_to_chapter_list(node)),
                                         );
@@ -508,26 +492,45 @@ pub struct MpvTracks {
     pub sub_tracks: Vec<MpvTrack>,
 }
 
-fn node_to_tracks(node: MpvNode) -> MpvTracks {
+fn node_to_tracks(value: &str) -> MpvTracks {
     let mut audio_tracks = Vec::new();
     let mut sub_tracks = Vec::new();
-    let array = node.array().unwrap();
+
+    let Ok(json) = serde_json::from_str::<Value>(value) else {
+        return MpvTracks {
+            audio_tracks,
+            sub_tracks,
+        };
+    };
+    let Some(array) = json.as_array() else {
+        return MpvTracks {
+            audio_tracks,
+            sub_tracks,
+        };
+    };
+
     for node in array {
-        let range = node.map().unwrap().collect::<HashMap<_, _>>();
-        let id = range.get("id").unwrap().i64().unwrap();
-        let title = range
+        let Some(obj) = node.as_object() else {
+            continue;
+        };
+
+        let id = obj.get("id").and_then(Value::as_i64).unwrap_or(0);
+        let title = obj
             .get("title")
-            .and_then(|v| v.str())
+            .and_then(Value::as_str)
             .unwrap_or("unknown")
             .to_string();
-
-        let lang = range
+        let lang = obj
             .get("lang")
-            .and_then(|v| v.str())
+            .and_then(Value::as_str)
+            .unwrap_or("unknown")
+            .to_string();
+        let type_ = obj
+            .get("type")
+            .and_then(Value::as_str)
             .unwrap_or("unknown")
             .to_string();
 
-        let type_ = range.get("type").unwrap().str().unwrap().to_string();
         let track = MpvTrack {
             id,
             title,
@@ -562,17 +565,31 @@ pub struct Chapter {
     pub time: f64,
 }
 
-fn node_to_chapter_list(node: MpvNode) -> ChapterList {
+fn node_to_chapter_list(value: &str) -> ChapterList {
     let mut chapters = Vec::new();
-    let array = node.array().unwrap();
+
+    let Ok(json) = serde_json::from_str::<Value>(value) else {
+        return ChapterList(chapters);
+    };
+    let Some(array) = json.as_array() else {
+        return ChapterList(chapters);
+    };
+
     for node in array {
-        let range = node.map().unwrap().collect::<HashMap<_, _>>();
-        let title = range
+        let Some(obj) = node.as_object() else {
+            continue;
+        };
+
+        let title = obj
             .get("title")
-            .and_then(|v| v.str())
+            .and_then(Value::as_str)
             .unwrap_or("unknown")
             .to_string();
-        let time = range.get("time").unwrap().f64().unwrap();
+        let time = obj
+            .get("time")
+            .and_then(Value::as_f64)
+            .or_else(|| obj.get("time").and_then(Value::as_i64).map(|v| v as f64))
+            .unwrap_or(0.0);
         chapters.push(Chapter { title, time });
     }
     ChapterList(chapters)
