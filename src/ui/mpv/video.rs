@@ -1,6 +1,7 @@
 use std::cell::{
     Cell,
     OnceCell,
+    RefCell,
 };
 
 use adw::{
@@ -8,7 +9,10 @@ use adw::{
     subclass::prelude::*,
 };
 use glib::Object;
-use gtk::glib;
+use gtk::{
+    gio,
+    glib,
+};
 use libmpv2::SetData;
 use tracing::info;
 
@@ -22,6 +26,7 @@ use super::{
     tsukimi_mpv::{
         Chapter,
         ChapterList,
+        DanmakuTrack,
         ListenEvent,
         MPV_EVENT_CHANNEL,
         MpvTrack,
@@ -41,7 +46,10 @@ use crate::{
 };
 
 #[cfg(target_os = "linux")]
-use mutsumi::MutsumiVideoPlayer;
+use mutsumi::{
+    Danmakw,
+    MutsumiVideoPlayer,
+};
 
 mod imp {
     use super::*;
@@ -51,12 +59,17 @@ mod imp {
         pub libmpv: OnceCell<MPVGLArea>,
         #[cfg(target_os = "linux")]
         pub mutsumi: OnceCell<MutsumiVideoPlayer>,
+        #[cfg(target_os = "linux")]
+        pub danmaku: OnceCell<Danmakw>,
         pub last_position: Cell<f64>,
         pub paused: Cell<bool>,
         pub current_audio_id: Cell<i64>,
         pub current_subtitle_id: Cell<i64>,
         pub pending_file_loaded: Cell<bool>,
         pub loaded: Cell<bool>,
+        pub danmaku_loaded: Cell<bool>,
+        pub danmaku_running: Cell<bool>,
+        pub danmaku_url: RefCell<Option<String>>,
     }
 
     #[glib::object_subclass]
@@ -79,10 +92,44 @@ mod imp {
                 {
                     let player = MutsumiVideoPlayer::new();
                     configure_mutsumi_player(&player);
-                    obj.set_child(Some(&player));
+                    let overlay = gtk::Overlay::new();
+                    overlay.set_hexpand(true);
+                    overlay.set_vexpand(true);
+                    overlay.set_child(Some(&player));
+
+                    let danmaku = Danmakw::new();
+                    danmaku.set_hexpand(true);
+                    danmaku.set_vexpand(true);
+                    danmaku.set_can_target(false);
+                    danmaku.set_opacity(SETTINGS.danmaku_opacity());
+                    danmaku.set_visible(SETTINGS.is_danmaku_enabled());
+                    overlay.add_overlay(&danmaku);
+
+                    SETTINGS
+                        .bind("is-danmaku-enabled", &danmaku, "visible")
+                        .build();
+                    SETTINGS
+                        .bind("danmaku-opacity", &danmaku, "opacity")
+                        .build();
+                    SETTINGS.connect_changed(
+                        Some("is-danmaku-enabled"),
+                        glib::clone!(
+                            #[weak]
+                            obj,
+                            move |_, _| {
+                                obj.sync_danmaku_playback();
+                            }
+                        ),
+                    );
+
+                    obj.set_child(Some(&overlay));
                     tracing::info!("Using mutsumi embedded video backend");
                     self.mutsumi
-                        .set(player).expect("mutsumi backend already set");
+                        .set(player)
+                        .expect("mutsumi backend already set");
+                    self.danmaku
+                        .set(danmaku)
+                        .expect("danmaku backend already set");
                     obj.listen_mutsumi_events();
                     return;
                 }
@@ -147,10 +194,16 @@ impl MPVVideo {
         self.imp().mutsumi.get()
     }
 
+    #[cfg(target_os = "linux")]
+    fn danmaku(&self) -> Option<&Danmakw> {
+        self.imp().danmaku.get()
+    }
+
     pub fn play(&self, url: &str, start_seconds: f64) {
         self.imp().last_position.set(start_seconds);
         self.imp().pending_file_loaded.set(true);
         self.imp().loaded.set(false);
+        self.clear_danmaku();
 
         #[cfg(target_os = "linux")]
         if let Some(player) = self.mutsumi() {
@@ -184,6 +237,8 @@ impl MPVVideo {
         }
 
         self.imp().last_position.set(start_seconds);
+        self.preroll_danmaku(start_seconds * 1000.0);
+        self.sync_danmaku_playback();
 
         #[cfg(target_os = "linux")]
         if let Some(player) = self.mutsumi() {
@@ -200,6 +255,7 @@ impl MPVVideo {
 
     pub fn stop(&self) {
         self.imp().loaded.set(false);
+        self.clear_danmaku();
 
         #[cfg(target_os = "linux")]
         if let Some(player) = self.mutsumi() {
@@ -255,6 +311,7 @@ impl MPVVideo {
         }
 
         self.imp().last_position.set(value);
+        self.preroll_danmaku(value * 1000.0);
 
         #[cfg(target_os = "linux")]
         if let Some(player) = self.mutsumi() {
@@ -343,6 +400,11 @@ impl MPVVideo {
 
     pub fn set_speed(&self, value: f64) {
         #[cfg(target_os = "linux")]
+        if let Some(danmaku) = self.danmaku() {
+            danmaku.set_speed_factor(value);
+        }
+
+        #[cfg(target_os = "linux")]
         if let Some(player) = self.mutsumi() {
             player.set_speed(value);
             return;
@@ -390,6 +452,7 @@ impl MPVVideo {
         if let Some(player) = self.mutsumi() {
             player.command_pause();
             self.imp().paused.set(!self.imp().paused.get());
+            self.sync_danmaku_playback();
             return;
         }
 
@@ -400,6 +463,7 @@ impl MPVVideo {
 
     pub fn set_pause(&self, value: bool) {
         self.imp().paused.set(value);
+        self.sync_danmaku_playback();
 
         #[cfg(target_os = "linux")]
         if let Some(player) = self.mutsumi() {
@@ -467,6 +531,117 @@ impl MPVVideo {
         self.imp().loaded.get()
     }
 
+    pub fn load_danmaku_track(&self, track: Option<DanmakuTrack>) {
+        let next_url = track.map(|track| track.external_url);
+        if self.imp().danmaku_url.borrow().as_ref() == next_url.as_ref() {
+            return;
+        }
+
+        self.imp().danmaku_url.replace(next_url.clone());
+        self.imp().danmaku_loaded.set(false);
+        self.stop_danmaku();
+
+        #[cfg(target_os = "linux")]
+        if let Some(danmaku) = self.danmaku() {
+            danmaku.load_danmaku(Vec::<mutsumi::Danmaku>::new());
+        }
+
+        #[cfg(target_os = "linux")]
+        if let Some(external_url) = next_url
+            && self.danmaku().is_some()
+        {
+            spawn(glib::clone!(
+                #[weak(rename_to = obj)]
+                self,
+                async move {
+                    match fetch_url_content(&external_url).await {
+                        Ok(content) => match mutsumi::parse_bilibili_xml(&content) {
+                            Ok(danmaku_items) => {
+                                let count = danmaku_items.len();
+                                if obj.imp().danmaku_url.borrow().as_deref()
+                                    != Some(external_url.as_str())
+                                {
+                                    return;
+                                }
+
+                                if let Some(danmaku) = obj.danmaku() {
+                                    danmaku.load_danmaku(danmaku_items);
+                                    danmaku.preroll_seek(obj.imp().last_position.get() * 1000.0);
+                                    obj.imp().danmaku_loaded.set(true);
+                                    obj.sync_danmaku_playback();
+                                    tracing::info!(
+                                        "Loaded danmaku track from {} ({} items)",
+                                        external_url,
+                                        count
+                                    );
+                                }
+                            }
+                            Err(e) => {
+                                tracing::warn!(
+                                    "Failed to parse danmaku track from {}: {}",
+                                    external_url,
+                                    e
+                                );
+                            }
+                        },
+                        Err(e) => {
+                            tracing::warn!(
+                                "Failed to load danmaku track from {}: {}",
+                                external_url,
+                                e
+                            );
+                        }
+                    }
+                }
+            ));
+        }
+    }
+
+    fn clear_danmaku(&self) {
+        self.imp().danmaku_url.take();
+        self.imp().danmaku_loaded.set(false);
+        self.stop_danmaku();
+
+        #[cfg(target_os = "linux")]
+        if let Some(danmaku) = self.danmaku() {
+            danmaku.load_danmaku(Vec::<mutsumi::Danmaku>::new());
+        }
+    }
+
+    fn sync_danmaku_playback(&self) {
+        let should_run = SETTINGS.is_danmaku_enabled()
+            && self.imp().loaded.get()
+            && self.imp().danmaku_loaded.get()
+            && !self.imp().paused.get();
+
+        #[cfg(target_os = "linux")]
+        if let Some(danmaku) = self.danmaku() {
+            if should_run == self.imp().danmaku_running.get() {
+                return;
+            }
+
+            danmaku.set_paused(!should_run);
+            self.imp().danmaku_running.set(should_run);
+        }
+    }
+
+    fn stop_danmaku(&self) {
+        #[cfg(target_os = "linux")]
+        if let Some(danmaku) = self.danmaku() {
+            danmaku.set_paused(true);
+        }
+        self.imp().danmaku_running.set(false);
+    }
+
+    fn preroll_danmaku(&self, time_millis: f64) {
+        #[cfg(target_os = "linux")]
+        if let Some(danmaku) = self.danmaku()
+            && self.imp().danmaku_loaded.get()
+        {
+            danmaku.preroll_seek(time_millis);
+        }
+    }
+
     fn mutsumi_active(&self) -> bool {
         #[cfg(target_os = "linux")]
         {
@@ -494,11 +669,13 @@ impl MPVVideo {
     #[cfg(target_os = "linux")]
     fn handle_mutsumi_event(&self, event: mutsumi::ListenEvent) {
         match event {
-            mutsumi::ListenEvent::Seek(_) => {
+            mutsumi::ListenEvent::Seek(position_ms) => {
+                self.preroll_danmaku(position_ms);
                 let _ = MPV_EVENT_CHANNEL.tx.send(ListenEvent::Seek);
             }
             mutsumi::ListenEvent::PlaybackRestart(position_ms) => {
                 self.imp().last_position.set(position_ms / 1000.0);
+                self.preroll_danmaku(position_ms);
                 if self.imp().pending_file_loaded.replace(false) {
                     self.mark_loaded();
                     let _ = MPV_EVENT_CHANNEL.tx.send(ListenEvent::FileLoaded);
@@ -514,6 +691,7 @@ impl MPVVideo {
             }
             mutsumi::ListenEvent::Pause(paused) => {
                 self.imp().paused.set(paused);
+                self.sync_danmaku_playback();
                 let _ = MPV_EVENT_CHANNEL.tx.send(ListenEvent::Pause(paused));
             }
             mutsumi::ListenEvent::CacheSpeed(speed) => {
@@ -543,9 +721,21 @@ impl MPVVideo {
             }
             mutsumi::ListenEvent::TimePos(position) => {
                 self.imp().last_position.set(position as f64);
+                #[cfg(target_os = "linux")]
+                if let Some(danmaku) = self.danmaku()
+                    && self.imp().danmaku_loaded.get()
+                    && !self.imp().danmaku_running.get()
+                {
+                    danmaku.update(position as f64 * 1000.0);
+                }
                 let _ = MPV_EVENT_CHANNEL.tx.send(ListenEvent::TimePos(position));
             }
             mutsumi::ListenEvent::PausedForCache(paused, _) => {
+                if paused {
+                    self.stop_danmaku();
+                } else {
+                    self.sync_danmaku_playback();
+                }
                 let _ = MPV_EVENT_CHANNEL
                     .tx
                     .send(ListenEvent::PausedForCache(paused));
@@ -649,6 +839,7 @@ fn convert_mutsumi_tracks(value: mutsumi::MpvTracks) -> MpvTracks {
             .into_iter()
             .map(convert_mutsumi_track)
             .collect(),
+        danmaku_track: value.danmaku_track.map(convert_mutsumi_danmaku_track),
     }
 }
 
@@ -663,6 +854,13 @@ fn convert_mutsumi_track(value: mutsumi::MpvTrack) -> MpvTrack {
 }
 
 #[cfg(target_os = "linux")]
+fn convert_mutsumi_danmaku_track(value: mutsumi::DanmakuTrack) -> DanmakuTrack {
+    DanmakuTrack {
+        external_url: value.external_url,
+    }
+}
+
+#[cfg(target_os = "linux")]
 fn convert_mutsumi_chapters(value: mutsumi::ChapterList) -> ChapterList {
     ChapterList(
         value
@@ -673,4 +871,12 @@ fn convert_mutsumi_chapters(value: mutsumi::ChapterList) -> ChapterList {
             })
             .collect(),
     )
+}
+
+#[cfg(target_os = "linux")]
+async fn fetch_url_content(url: &str) -> Result<String, Box<dyn std::error::Error>> {
+    let file = gio::File::for_uri(url);
+    let (content_bytes, _etag) = file.load_contents_future().await?;
+
+    Ok(String::from_utf8(content_bytes.to_vec())?)
 }

@@ -549,22 +549,30 @@ fn is_wayland_session() -> bool {
 pub struct MpvTracks {
     pub audio_tracks: Vec<MpvTrack>,
     pub sub_tracks: Vec<MpvTrack>,
+    pub danmaku_track: Option<DanmakuTrack>,
+}
+
+pub struct DanmakuTrack {
+    pub external_url: String,
 }
 
 fn node_to_tracks(value: &str) -> MpvTracks {
     let mut audio_tracks = Vec::new();
     let mut sub_tracks = Vec::new();
+    let mut danmaku_track = None;
 
     let Ok(json) = serde_json::from_str::<Value>(value) else {
         return MpvTracks {
             audio_tracks,
             sub_tracks,
+            danmaku_track,
         };
     };
     let Some(array) = json.as_array() else {
         return MpvTracks {
             audio_tracks,
             sub_tracks,
+            danmaku_track,
         };
     };
 
@@ -590,6 +598,33 @@ fn node_to_tracks(value: &str) -> MpvTracks {
             .unwrap_or("unknown")
             .to_string();
 
+        if type_ == "sub" && lang == "danmaku" {
+            let external = obj
+                .get("external")
+                .and_then(Value::as_bool)
+                .unwrap_or(false);
+
+            if !external {
+                continue;
+            }
+
+            let external_filename = obj
+                .get("external-filename")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
+
+            let Some(external_url) =
+                external_filename.strip_prefix("edl://!no_clip;!delay_open,media_type=sub;%44%")
+            else {
+                continue;
+            };
+
+            danmaku_track = Some(DanmakuTrack {
+                external_url: external_url.to_string(),
+            });
+            continue;
+        }
+
         let track = MpvTrack {
             id,
             title,
@@ -605,6 +640,7 @@ fn node_to_tracks(value: &str) -> MpvTracks {
     MpvTracks {
         audio_tracks,
         sub_tracks,
+        danmaku_track,
     }
 }
 
