@@ -18,6 +18,9 @@ use crate::{
     },
 };
 
+#[cfg(target_os = "linux")]
+use crate::client::DanmakuServer;
+
 pub struct Settings(ThreadGuard<gio::Settings>);
 
 impl Settings {
@@ -79,6 +82,16 @@ impl Settings {
     const KEY_IS_FULLSCREEN: &'static str = "is-fullscreen"; // bool
     const KEY_DANMAKU_OPACITY: &'static str = "danmaku-opacity"; // f64
     const KEY_IS_DANMAKU_ENABLED: &'static str = "is-danmaku-enabled"; // bool
+    const KEY_DANMAKU_APPID: &'static str = "danmaku-appid"; // String
+    const KEY_DANMAKU_APPSECRET: &'static str = "danmaku-appsecret"; // String
+    const KEY_DANMAKU_SERVERS: &'static str = "danmaku-servers"; // String
+    const KEY_DANMAKU_ACTIVE_SERVER: &'static str = "danmaku-active-server"; // i32
+
+    fn has_key(&self, key: &str) -> bool {
+        self.settings_schema()
+            .as_ref()
+            .is_some_and(|schema| schema.has_key(key))
+    }
 
     pub fn is_overlay(&self) -> bool {
         self.boolean(Self::KEY_IS_OVERLAY)
@@ -255,6 +268,64 @@ impl Settings {
 
     pub fn is_danmaku_enabled(&self) -> bool {
         self.boolean(Self::KEY_IS_DANMAKU_ENABLED)
+    }
+
+    pub fn set_danmaku_enabled(&self, is_danmaku_enabled: bool) -> Result<(), glib::BoolError> {
+        self.set_boolean(Self::KEY_IS_DANMAKU_ENABLED, is_danmaku_enabled)
+    }
+
+    pub fn has_danmaku_custom_credentials_keys(&self) -> bool {
+        self.has_key(Self::KEY_DANMAKU_APPID) && self.has_key(Self::KEY_DANMAKU_APPSECRET)
+    }
+
+    pub fn danmaku_appid(&self) -> String {
+        if !self.has_key(Self::KEY_DANMAKU_APPID) {
+            return String::new();
+        }
+        self.string(Self::KEY_DANMAKU_APPID).to_string()
+    }
+
+    pub fn set_danmaku_appid(&self, appid: &str) -> Result<(), glib::BoolError> {
+        if !self.has_key(Self::KEY_DANMAKU_APPID) {
+            return Ok(());
+        }
+        self.set_string(Self::KEY_DANMAKU_APPID, appid)
+    }
+
+    pub fn danmaku_appsecret(&self) -> String {
+        if !self.has_key(Self::KEY_DANMAKU_APPSECRET) {
+            return String::new();
+        }
+        self.string(Self::KEY_DANMAKU_APPSECRET).to_string()
+    }
+
+    pub fn set_danmaku_appsecret(&self, appsecret: &str) -> Result<(), glib::BoolError> {
+        if !self.has_key(Self::KEY_DANMAKU_APPSECRET) {
+            return Ok(());
+        }
+        self.set_string(Self::KEY_DANMAKU_APPSECRET, appsecret)
+    }
+
+    #[cfg(target_os = "linux")]
+    pub fn danmaku_servers(&self) -> Vec<DanmakuServer> {
+        if !self.has_key(Self::KEY_DANMAKU_SERVERS) {
+            return Vec::new();
+        }
+        serde_json::from_str(self.string(Self::KEY_DANMAKU_SERVERS).as_ref()).unwrap_or_default()
+    }
+
+    pub fn danmaku_active_server(&self) -> i32 {
+        if !self.has_key(Self::KEY_DANMAKU_ACTIVE_SERVER) {
+            return -1;
+        }
+        self.int(Self::KEY_DANMAKU_ACTIVE_SERVER)
+    }
+
+    pub fn set_danmaku_active_server(&self, index: i32) -> Result<(), glib::BoolError> {
+        if !self.has_key(Self::KEY_DANMAKU_ACTIVE_SERVER) {
+            return Ok(());
+        }
+        self.set_int(Self::KEY_DANMAKU_ACTIVE_SERVER, index)
     }
 
     pub fn mpv_audio_channel(&self) -> i32 {
