@@ -207,6 +207,10 @@ mod imp {
         #[template_child]
         pub subtitle_tracks_menu_button: TemplateChild<gtk::MenuButton>,
         #[template_child]
+        pub danmaku_button: TemplateChild<gtk::MenuButton>,
+        #[template_child]
+        pub danmaku_switch: TemplateChild<gtk::Switch>,
+        #[template_child]
         pub title_label1: TemplateChild<gtk::Label>,
         #[template_child]
         pub title_label2: TemplateChild<gtk::Label>,
@@ -349,6 +353,10 @@ mod imp {
 
             SETTINGS
                 .bind("mpv-default-volume", &self.volume_adj.get(), "value")
+                .build();
+
+            SETTINGS
+                .bind("is-danmaku-enabled", &self.danmaku_switch.get(), "active")
                 .build();
 
             self.video_scale.set_player(Some(&self.video.get()));
@@ -858,6 +866,7 @@ impl MPVPage {
 
     fn set_audio_and_video_tracks_dropdown(&self, value: MpvTracks) {
         let imp = self.imp();
+        imp.video.load_danmaku_track(value.danmaku_track);
         self.bind_tracks(
             value.audio_tracks,
             &imp.audio_listbox.get(),
@@ -1352,6 +1361,7 @@ impl MPVPage {
         if imp.audio_tracks_menu_button.is_active()
             || imp.subtitle_tracks_menu_button.is_active()
             || imp.volume_button.is_active()
+            || imp.danmaku_button.is_active()
             || !self.can_fade_cursor_set()
         {
             return false;
