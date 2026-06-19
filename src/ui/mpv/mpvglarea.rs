@@ -308,12 +308,20 @@ impl MPVGLArea {
         self.imp().mpv().display_stats_toggle()
     }
 
+    pub fn stop(&self) {
+        self.imp().mpv().stop()
+    }
+
     pub fn paused(&self) -> bool {
         self.imp().mpv().paused()
     }
 
     pub fn pause(&self) {
         self.imp().mpv().command_pause();
+    }
+
+    pub fn set_pause(&self, value: bool) {
+        self.imp().mpv().pause(value);
     }
 
     pub fn volume_scroll(&self, value: i64) {
