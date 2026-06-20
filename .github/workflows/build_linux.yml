@@ -28,6 +28,7 @@ jobs:
           apt-get install -y git
           apt-get install -y --no-install-recommends \
             appstream \
+            blueprint-compiler \
             build-essential \
             clang \
             curl \
