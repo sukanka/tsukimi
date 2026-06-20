@@ -126,11 +126,9 @@ mod imp {
                     tracing::info!("Using mutsumi embedded video backend");
                     self.mutsumi
                         .set(player)
-                        .ok()
                         .expect("mutsumi backend already set");
                     self.danmaku
                         .set(danmaku)
-                        .ok()
                         .expect("danmaku backend already set");
                     obj.listen_mutsumi_events();
                     return;
@@ -140,10 +138,7 @@ mod imp {
             let player = MPVGLArea::new();
             obj.set_child(Some(&player));
             tracing::info!("Using libmpv GLArea video backend");
-            self.libmpv
-                .set(player)
-                .ok()
-                .expect("libmpv backend already set");
+            self.libmpv.set(player).expect("libmpv backend already set");
         }
 
         fn dispose(&self) {

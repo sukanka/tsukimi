@@ -228,9 +228,9 @@ impl AccountWindow {
         let active_route = imp.old_account.borrow().as_ref().and_then(|account| {
             let active_route = account.active_route?;
             let old_route = account.routes.get(active_route)?;
-            if routes.get(active_route) == Some(old_route) {
-                Some(active_route)
-            } else if account.routes.len() == routes.len() && active_route < routes.len() {
+            if routes.get(active_route) == Some(old_route)
+                || (account.routes.len() == routes.len() && active_route < routes.len())
+            {
                 Some(active_route)
             } else {
                 routes.iter().position(|route| route == old_route)
