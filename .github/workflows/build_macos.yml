@@ -32,6 +32,7 @@ jobs:
 
       - name: Install Dependencies
         run: |
+          brew install blueprint-compiler
           brew install gtk4
           brew install libadwaita
           rustup target add ${{matrix.target}}
