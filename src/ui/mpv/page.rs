@@ -646,6 +646,21 @@ mod imp {
                         obj.reset_fade_timeout();
                     }
                 ));
+
+                let danmaku_outside_click = gtk::GestureClick::new();
+                danmaku_outside_click.set_button(0);
+                danmaku_outside_click.set_propagation_phase(gtk::PropagationPhase::Capture);
+                danmaku_outside_click.connect_pressed(glib::clone!(
+                    #[weak]
+                    obj,
+                    move |gesture, _, _, _| {
+                        if obj.imp().danmaku_popover.is_visible() {
+                            obj.close_danmaku_popover();
+                            gesture.set_state(gtk::EventSequenceState::Claimed);
+                        }
+                    }
+                ));
+                obj.add_controller(danmaku_outside_click);
             }
 
             obj.set_popover();
