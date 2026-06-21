@@ -338,8 +338,6 @@ mod imp {
         #[template_child]
         pub danmaku_font_size_adj: TemplateChild<gtk::Adjustment>,
         #[template_child]
-        pub danmaku_display_area_adj: TemplateChild<gtk::Adjustment>,
-        #[template_child]
         pub danmaku_intensity_adj: TemplateChild<gtk::Adjustment>,
         #[template_child]
         pub danmaku_font_weight_adj: TemplateChild<gtk::Adjustment>,
@@ -511,13 +509,6 @@ mod imp {
                     .build();
                 SETTINGS
                     .bind(
-                        "danmaku-display-area",
-                        &self.danmaku_display_area_adj.get(),
-                        "value",
-                    )
-                    .build();
-                SETTINGS
-                    .bind(
                         "danmaku-intensity",
                         &self.danmaku_intensity_adj.get(),
                         "value",
@@ -578,15 +569,6 @@ mod imp {
                         }
                     ));
                 video.set_danmaku_font_size(self.danmaku_font_size_adj.get().value());
-                self.danmaku_display_area_adj
-                    .connect_value_changed(glib::clone!(
-                        #[weak]
-                        video,
-                        move |adj| {
-                            video.set_danmaku_display_area(adj.value());
-                        }
-                    ));
-                video.set_danmaku_display_area(self.danmaku_display_area_adj.get().value());
                 self.danmaku_intensity_adj
                     .connect_value_changed(glib::clone!(
                         #[weak]

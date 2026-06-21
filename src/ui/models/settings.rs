@@ -68,7 +68,6 @@ impl Settings {
     const KEY_DANMAKU_OPACITY: &'static str = "danmaku-opacity"; // f64
     const KEY_DANMAKU_SPEED: &'static str = "danmaku-speed"; // f64
     const KEY_DANMAKU_FONT_SIZE: &'static str = "danmaku-font-size"; // f64
-    const KEY_DANMAKU_DISPLAY_AREA: &'static str = "danmaku-display-area"; // f64
     const KEY_DANMAKU_FONT_WEIGHT: &'static str = "danmaku-font-weight"; // f64
     const KEY_DANMAKU_INTENSITY: &'static str = "danmaku-intensity"; // f64
     const KEY_DANMAKU_SPACING_FACTOR: &'static str = "danmaku-spacing-factor"; // f64
@@ -164,10 +163,6 @@ impl Settings {
 
     pub fn danmaku_font_size(&self) -> f64 {
         self.double(Self::KEY_DANMAKU_FONT_SIZE)
-    }
-
-    pub fn danmaku_display_area(&self) -> f64 {
-        self.double(Self::KEY_DANMAKU_DISPLAY_AREA)
     }
 
     pub fn danmaku_font_weight(&self) -> f64 {

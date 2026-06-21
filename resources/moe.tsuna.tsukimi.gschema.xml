@@ -219,10 +219,6 @@
       <summary>Danmaku font size</summary>
       <default>24.0</default>
     </key>
-    <key type="d" name="danmaku-display-area">
-      <summary>Danmaku display area</summary>
-      <default>0.5</default>
-    </key>
     <key type="d" name="danmaku-font-weight">
       <summary>Danmaku font weight</summary>
       <default>5.0</default>
