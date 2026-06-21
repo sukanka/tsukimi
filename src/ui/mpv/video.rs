@@ -70,6 +70,7 @@ mod imp {
         pub danmaku_loaded: Cell<bool>,
         pub danmaku_running: Cell<bool>,
         pub danmaku_display_area: Cell<f64>,
+        pub danmaku_intensity: Cell<f64>,
         pub danmaku_url: RefCell<Option<String>>,
     }
 
@@ -100,16 +101,14 @@ mod imp {
 
                     let danmaku = Danmakw::new();
                     danmaku.set_hexpand(true);
-                    danmaku.set_vexpand(false);
-                    danmaku.set_valign(gtk::Align::Start);
-                    danmaku.set_overflow(gtk::Overflow::Hidden);
+                    danmaku.set_vexpand(true);
                     danmaku.set_can_target(false);
                     danmaku.set_opacity(SETTINGS.danmaku_opacity());
                     danmaku.set_speed_factor(SETTINGS.danmaku_speed());
                     danmaku.set_font_size(SETTINGS.danmaku_font_size());
                     self.danmaku_display_area
                         .set(SETTINGS.danmaku_display_area());
-                    danmaku.set_intensity(SETTINGS.danmaku_intensity().round() as u32);
+                    self.danmaku_intensity.set(SETTINGS.danmaku_intensity());
                     danmaku.set_font_weight(SETTINGS.danmaku_font_weight().round() as u32);
                     danmaku.set_spacing_factor(SETTINGS.danmaku_spacing_factor());
                     danmaku.set_outline_px(SETTINGS.danmaku_outline_px());
@@ -142,7 +141,7 @@ mod imp {
                     self.danmaku
                         .set(danmaku)
                         .expect("danmaku backend already set");
-                    obj.update_danmaku_display_area();
+                    obj.update_danmaku_intensity();
                     obj.listen_mutsumi_events();
                     return;
                 }
@@ -162,14 +161,7 @@ mod imp {
         }
     }
 
-    impl WidgetImpl for MPVVideo {
-        fn size_allocate(&self, width: i32, height: i32, baseline: i32) {
-            self.parent_size_allocate(width, height, baseline);
-
-            #[cfg(target_os = "linux")]
-            self.obj().update_danmaku_display_area_for_height(height);
-        }
-    }
+    impl WidgetImpl for MPVVideo {}
     impl BinImpl for MPVVideo {}
 }
 
@@ -220,19 +212,18 @@ impl MPVVideo {
     }
 
     #[cfg(target_os = "linux")]
-    fn update_danmaku_display_area(&self) {
-        self.update_danmaku_display_area_for_height(self.height());
-    }
-
-    #[cfg(target_os = "linux")]
-    fn update_danmaku_display_area_for_height(&self, height: i32) {
+    fn update_danmaku_intensity(&self) {
         let Some(danmaku) = self.danmaku() else {
             return;
         };
 
-        let height = height.max(1);
-        let area = self.imp().danmaku_display_area.get().clamp(0.25, 1.0);
-        danmaku.set_height_request((height as f64 * area).round() as i32);
+        let requested = self.imp().danmaku_intensity.get().round().clamp(0.0, 3.0) as u32;
+        let cap = display_area_intensity_cap(self.imp().danmaku_display_area.get());
+        danmaku.set_intensity(requested.min(cap));
+
+        if self.imp().danmaku_loaded.get() {
+            danmaku.preroll_seek(self.imp().last_position.get() * 1000.0);
+        }
     }
 
     pub fn play(&self, url: &str, start_seconds: f64) {
@@ -684,14 +675,15 @@ impl MPVVideo {
         #[cfg(target_os = "linux")]
         {
             self.imp().danmaku_display_area.set(value.clamp(0.25, 1.0));
-            self.update_danmaku_display_area();
+            self.update_danmaku_intensity();
         }
     }
 
     pub fn set_danmaku_intensity(&self, value: f64) {
         #[cfg(target_os = "linux")]
-        if let Some(danmaku) = self.danmaku() {
-            danmaku.set_intensity(value.round() as u32);
+        {
+            self.imp().danmaku_intensity.set(value);
+            self.update_danmaku_intensity();
         }
     }
 
@@ -999,6 +991,24 @@ fn danmaku_timeline(items: &[mutsumi::Danmaku]) -> Vec<f64> {
             }
         })
         .collect()
+}
+
+#[cfg(target_os = "linux")]
+fn display_area_intensity_cap(area: f64) -> u32 {
+    let area = area.clamp(0.25, 1.0);
+
+    // mutsumi currently exposes only coarse density buckets. Treat Display Area
+    // as a cap on those buckets instead of clipping the widget, so excess rows
+    // are not allocated and then hidden below the visible area.
+    if area <= 0.5 {
+        0
+    } else if area <= 0.75 {
+        1
+    } else if area < 1.0 {
+        2
+    } else {
+        3
+    }
 }
 
 #[cfg(target_os = "linux")]
