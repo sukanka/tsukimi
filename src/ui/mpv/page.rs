@@ -369,10 +369,6 @@ mod imp {
         #[cfg(target_os = "linux")]
         pub danmaku_search_generation: Cell<u64>,
         #[cfg(target_os = "linux")]
-        pub updating_danmaku_server_combo: Cell<bool>,
-        #[cfg(target_os = "linux")]
-        pub danmaku_server_changed_in_popover: Cell<bool>,
-        #[cfg(target_os = "linux")]
         pub danmaku_anime_candidates: RefCell<Vec<String>>,
         #[cfg(target_os = "linux")]
         pub danmaku_anime_candidate_button: RefCell<Option<gtk::MenuButton>>,
@@ -646,7 +642,6 @@ mod imp {
                     obj,
                     move |_| {
                         obj.cancel_danmaku_search();
-                        obj.imp().danmaku_server_changed_in_popover.set(false);
                         obj.set_can_fade_cursor_set(true);
                         obj.reset_fade_timeout();
                     }
@@ -812,12 +807,9 @@ impl MPVPage {
             model.append(&server.name);
         }
 
-        let imp = self.imp();
-        let combo = &imp.danmaku_server_combo;
-        imp.updating_danmaku_server_combo.set(true);
+        let combo = &self.imp().danmaku_server_combo;
         combo.set_model(Some(&model));
         combo.set_selected(danmaku_server_to_combo_index(active));
-        imp.updating_danmaku_server_combo.set(false);
     }
 
     #[cfg(target_os = "linux")]
@@ -1025,7 +1017,6 @@ impl MPVPage {
 
     #[cfg(target_os = "linux")]
     fn prepare_danmaku_popover(&self) {
-        self.imp().danmaku_server_changed_in_popover.set(false);
         self.rebuild_danmaku_server_list();
 
         let Some(item) = self.current_video() else {
@@ -1600,10 +1591,6 @@ impl MPVPage {
         let selected = self.imp().danmaku_server_combo.selected();
         let _ = SETTINGS.set_danmaku_active_server(danmaku_combo_to_server_index(selected));
         self.apply_active_danmaku_server();
-
-        if !self.imp().updating_danmaku_server_combo.get() {
-            self.imp().danmaku_server_changed_in_popover.set(true);
-        }
     }
 
     #[cfg(target_os = "linux")]
@@ -2752,9 +2739,7 @@ impl MPVPage {
     #[template_callback]
     fn left_click_cb(&self) {
         #[cfg(target_os = "linux")]
-        if self.imp().danmaku_popover.is_visible()
-            && self.imp().danmaku_server_changed_in_popover.get()
-        {
+        if self.imp().danmaku_popover.is_visible() {
             self.close_danmaku_popover();
             return;
         }
