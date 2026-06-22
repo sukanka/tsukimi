@@ -335,6 +335,18 @@ mod imp {
         pub danmaku_speed_adj: TemplateChild<gtk::Adjustment>,
         #[template_child]
         pub danmaku_opacity_adj: TemplateChild<gtk::Adjustment>,
+        #[template_child]
+        pub danmaku_font_size_adj: TemplateChild<gtk::Adjustment>,
+        #[template_child]
+        pub danmaku_intensity_adj: TemplateChild<gtk::Adjustment>,
+        #[template_child]
+        pub danmaku_font_weight_adj: TemplateChild<gtk::Adjustment>,
+        #[template_child]
+        pub danmaku_spacing_factor_adj: TemplateChild<gtk::Adjustment>,
+        #[template_child]
+        pub danmaku_outline_px_adj: TemplateChild<gtk::Adjustment>,
+        #[template_child]
+        pub danmaku_shadow_offset_adj: TemplateChild<gtk::Adjustment>,
 
         #[property(get, set, nullable)]
         pub current_video: RefCell<Option<TuItem>>,
@@ -485,6 +497,51 @@ mod imp {
                 SETTINGS
                     .bind("danmaku-opacity", &self.danmaku_opacity_adj.get(), "value")
                     .build();
+                SETTINGS
+                    .bind("danmaku-speed", &self.danmaku_speed_adj.get(), "value")
+                    .build();
+                SETTINGS
+                    .bind(
+                        "danmaku-font-size",
+                        &self.danmaku_font_size_adj.get(),
+                        "value",
+                    )
+                    .build();
+                SETTINGS
+                    .bind(
+                        "danmaku-intensity",
+                        &self.danmaku_intensity_adj.get(),
+                        "value",
+                    )
+                    .build();
+                SETTINGS
+                    .bind(
+                        "danmaku-font-weight",
+                        &self.danmaku_font_weight_adj.get(),
+                        "value",
+                    )
+                    .build();
+                SETTINGS
+                    .bind(
+                        "danmaku-spacing-factor",
+                        &self.danmaku_spacing_factor_adj.get(),
+                        "value",
+                    )
+                    .build();
+                SETTINGS
+                    .bind(
+                        "danmaku-outline-px",
+                        &self.danmaku_outline_px_adj.get(),
+                        "value",
+                    )
+                    .build();
+                SETTINGS
+                    .bind(
+                        "danmaku-shadow-offset",
+                        &self.danmaku_shadow_offset_adj.get(),
+                        "value",
+                    )
+                    .build();
 
                 let video = self.video.get();
                 self.danmaku_opacity_adj.connect_value_changed(glib::clone!(
@@ -503,6 +560,60 @@ mod imp {
                     }
                 ));
                 video.set_danmaku_speed(self.danmaku_speed_adj.get().value());
+                self.danmaku_font_size_adj
+                    .connect_value_changed(glib::clone!(
+                        #[weak]
+                        video,
+                        move |adj| {
+                            video.set_danmaku_font_size(adj.value());
+                        }
+                    ));
+                video.set_danmaku_font_size(self.danmaku_font_size_adj.get().value());
+                self.danmaku_intensity_adj
+                    .connect_value_changed(glib::clone!(
+                        #[weak]
+                        video,
+                        move |adj| {
+                            video.set_danmaku_intensity(adj.value());
+                        }
+                    ));
+                video.set_danmaku_intensity(self.danmaku_intensity_adj.get().value());
+                self.danmaku_font_weight_adj
+                    .connect_value_changed(glib::clone!(
+                        #[weak]
+                        video,
+                        move |adj| {
+                            video.set_danmaku_font_weight(adj.value());
+                        }
+                    ));
+                video.set_danmaku_font_weight(self.danmaku_font_weight_adj.get().value());
+                self.danmaku_spacing_factor_adj
+                    .connect_value_changed(glib::clone!(
+                        #[weak]
+                        video,
+                        move |adj| {
+                            video.set_danmaku_spacing_factor(adj.value());
+                        }
+                    ));
+                video.set_danmaku_spacing_factor(self.danmaku_spacing_factor_adj.get().value());
+                self.danmaku_outline_px_adj
+                    .connect_value_changed(glib::clone!(
+                        #[weak]
+                        video,
+                        move |adj| {
+                            video.set_danmaku_outline_px(adj.value());
+                        }
+                    ));
+                video.set_danmaku_outline_px(self.danmaku_outline_px_adj.get().value());
+                self.danmaku_shadow_offset_adj
+                    .connect_value_changed(glib::clone!(
+                        #[weak]
+                        video,
+                        move |adj| {
+                            video.set_danmaku_shadow_offset(adj.value());
+                        }
+                    ));
+                video.set_danmaku_shadow_offset(self.danmaku_shadow_offset_adj.get().value());
             }
 
             #[cfg(not(target_os = "linux"))]
