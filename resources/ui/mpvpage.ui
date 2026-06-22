@@ -370,11 +370,11 @@
                                   </object>
                                 </child>
                                 <child>
-                                  <object class="GtkMenuButton" id="danmaku_button">
-                                    <property name="popover">danmaku_popover</property>
+                                  <object class="GtkButton" id="danmaku_button">
                                     <property name="icon-name">card-bulleted-symbolic</property>
                                     <property name="tooltip-text" translatable="yes">Danmaku Options</property>
                                     <property name="valign">center</property>
+                                    <signal name="clicked" handler="on_danmaku_button_clicked" swapped="yes" />
                                     <style>
                                       <class name="flat" />
                                       <class name="circular" />

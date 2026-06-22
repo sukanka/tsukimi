@@ -275,7 +275,7 @@ mod imp {
         #[template_child]
         pub subtitle_tracks_menu_button: TemplateChild<gtk::MenuButton>,
         #[template_child]
-        pub danmaku_button: TemplateChild<gtk::MenuButton>,
+        pub danmaku_button: TemplateChild<gtk::Button>,
         #[template_child]
         pub danmaku_popover: TemplateChild<gtk::Popover>,
         #[template_child]
@@ -368,6 +368,10 @@ mod imp {
         pub danmaku_list: RefCell<Option<Vec<mutsumi::Danmaku>>>,
         #[cfg(target_os = "linux")]
         pub danmaku_search_generation: Cell<u64>,
+        #[cfg(target_os = "linux")]
+        pub rebuilding_danmaku_server_list: Cell<bool>,
+        #[cfg(target_os = "linux")]
+        pub danmaku_server_waiting_outside_click: Cell<bool>,
         #[cfg(target_os = "linux")]
         pub danmaku_anime_candidates: RefCell<Vec<String>>,
         #[cfg(target_os = "linux")]
@@ -629,6 +633,7 @@ mod imp {
                 obj.setup_danmaku_anime_candidate_picker();
                 obj.rebuild_danmaku_server_list();
 
+                self.danmaku_popover.set_parent(&self.danmaku_button.get());
                 self.danmaku_popover.connect_show(glib::clone!(
                     #[weak]
                     obj,
@@ -641,8 +646,45 @@ mod imp {
                     obj,
                     move |_| {
                         obj.cancel_danmaku_search();
+                        obj.imp().danmaku_server_waiting_outside_click.set(false);
+                        obj.set_can_fade_cursor_set(true);
+                        obj.reset_fade_timeout();
                     }
                 ));
+
+                let danmaku_popover_click = gtk::GestureClick::new();
+                danmaku_popover_click.set_button(0);
+                danmaku_popover_click.set_propagation_phase(gtk::PropagationPhase::Capture);
+                danmaku_popover_click.connect_pressed(glib::clone!(
+                    #[weak]
+                    obj,
+                    move |gesture, _, x, y| {
+                        let imp = obj.imp();
+                        if imp.danmaku_server_waiting_outside_click.get()
+                            && imp.danmaku_popover.is_visible()
+                            && !imp.danmaku_popover.contains(x, y)
+                        {
+                            obj.close_danmaku_popover();
+                            gesture.set_state(gtk::EventSequenceState::Claimed);
+                        }
+                    }
+                ));
+                self.danmaku_popover.add_controller(danmaku_popover_click);
+
+                let danmaku_outside_click = gtk::GestureClick::new();
+                danmaku_outside_click.set_button(0);
+                danmaku_outside_click.set_propagation_phase(gtk::PropagationPhase::Capture);
+                danmaku_outside_click.connect_pressed(glib::clone!(
+                    #[weak]
+                    obj,
+                    move |gesture, _, _, _| {
+                        if obj.imp().danmaku_popover.is_visible() {
+                            obj.close_danmaku_popover();
+                            gesture.set_state(gtk::EventSequenceState::Claimed);
+                        }
+                    }
+                ));
+                obj.add_controller(danmaku_outside_click);
             }
 
             obj.set_popover();
@@ -805,8 +847,10 @@ impl MPVPage {
         }
 
         let combo = &self.imp().danmaku_server_combo;
+        self.imp().rebuilding_danmaku_server_list.set(true);
         combo.set_model(Some(&model));
         combo.set_selected(danmaku_server_to_combo_index(active));
+        self.imp().rebuilding_danmaku_server_list.set(false);
     }
 
     #[cfg(target_os = "linux")]
@@ -1320,6 +1364,15 @@ impl MPVPage {
 
     #[template_callback]
     #[cfg(target_os = "linux")]
+    fn on_danmaku_button_clicked(&self, _button: &gtk::Button) {
+        let imp = self.imp();
+        self.set_can_fade_cursor_set(false);
+        self.set_reveal_overlay(true);
+        imp.danmaku_popover.popup();
+    }
+
+    #[template_callback]
+    #[cfg(target_os = "linux")]
     fn on_danmaku_anime_candidate_changed(&self, _pspec: glib::ParamSpec) {}
 
     #[template_callback]
@@ -1400,9 +1453,7 @@ impl MPVPage {
 
     #[cfg(target_os = "linux")]
     fn close_danmaku_popover(&self) {
-        let imp = self.imp();
-        imp.danmaku_popover.popdown();
-        imp.danmaku_button.set_active(false);
+        self.imp().danmaku_popover.popdown();
     }
 
     #[cfg(target_os = "linux")]
@@ -1578,9 +1629,27 @@ impl MPVPage {
     #[template_callback]
     #[cfg(target_os = "linux")]
     fn on_danmaku_server_combo_changed(&self, _pspec: glib::ParamSpec) {
+        if self.imp().rebuilding_danmaku_server_list.get() {
+            return;
+        }
+
         let selected = self.imp().danmaku_server_combo.selected();
-        let _ = SETTINGS.set_danmaku_active_server(danmaku_combo_to_server_index(selected));
+        let active = danmaku_combo_to_server_index(selected);
+        if SETTINGS.danmaku_active_server() == active {
+            return;
+        }
+
+        let _ = SETTINGS.set_danmaku_active_server(active);
         self.apply_active_danmaku_server();
+        glib::idle_add_local_once(glib::clone!(
+            #[weak(rename_to = obj)]
+            self,
+            move || {
+                if obj.imp().danmaku_popover.is_visible() {
+                    obj.imp().danmaku_server_waiting_outside_click.set(true);
+                }
+            }
+        ));
     }
 
     #[cfg(target_os = "linux")]
@@ -1625,6 +1694,10 @@ impl MPVPage {
     fn on_danmaku_switch_state_set(&self, _state: bool) -> bool {
         false
     }
+
+    #[template_callback]
+    #[cfg(not(target_os = "linux"))]
+    fn on_danmaku_button_clicked(&self, _button: &gtk::Button) {}
 
     #[template_callback]
     #[cfg(not(target_os = "linux"))]
@@ -2587,7 +2660,7 @@ impl MPVPage {
         if imp.audio_tracks_menu_button.is_active()
             || imp.subtitle_tracks_menu_button.is_active()
             || imp.volume_button.is_active()
-            || imp.danmaku_button.is_active()
+            || imp.danmaku_popover.is_visible()
             || !self.can_fade_cursor_set()
         {
             return false;
@@ -2724,6 +2797,12 @@ impl MPVPage {
 
     #[template_callback]
     fn left_click_cb(&self) {
+        #[cfg(target_os = "linux")]
+        if self.imp().danmaku_popover.is_visible() {
+            self.close_danmaku_popover();
+            return;
+        }
+
         self.imp().video.pause();
     }
 
