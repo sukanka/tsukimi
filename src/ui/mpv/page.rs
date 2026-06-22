@@ -369,6 +369,10 @@ mod imp {
         #[cfg(target_os = "linux")]
         pub danmaku_search_generation: Cell<u64>,
         #[cfg(target_os = "linux")]
+        pub rebuilding_danmaku_server_list: Cell<bool>,
+        #[cfg(target_os = "linux")]
+        pub danmaku_server_waiting_outside_click: Cell<bool>,
+        #[cfg(target_os = "linux")]
         pub danmaku_anime_candidates: RefCell<Vec<String>>,
         #[cfg(target_os = "linux")]
         pub danmaku_anime_candidate_button: RefCell<Option<gtk::MenuButton>>,
@@ -642,10 +646,30 @@ mod imp {
                     obj,
                     move |_| {
                         obj.cancel_danmaku_search();
+                        obj.imp().danmaku_server_waiting_outside_click.set(false);
                         obj.set_can_fade_cursor_set(true);
                         obj.reset_fade_timeout();
                     }
                 ));
+
+                let danmaku_popover_click = gtk::GestureClick::new();
+                danmaku_popover_click.set_button(0);
+                danmaku_popover_click.set_propagation_phase(gtk::PropagationPhase::Capture);
+                danmaku_popover_click.connect_pressed(glib::clone!(
+                    #[weak]
+                    obj,
+                    move |gesture, _, x, y| {
+                        let imp = obj.imp();
+                        if imp.danmaku_server_waiting_outside_click.get()
+                            && imp.danmaku_popover.is_visible()
+                            && !imp.danmaku_popover.contains(x, y)
+                        {
+                            obj.close_danmaku_popover();
+                            gesture.set_state(gtk::EventSequenceState::Claimed);
+                        }
+                    }
+                ));
+                self.danmaku_popover.add_controller(danmaku_popover_click);
 
                 let danmaku_outside_click = gtk::GestureClick::new();
                 danmaku_outside_click.set_button(0);
@@ -823,8 +847,10 @@ impl MPVPage {
         }
 
         let combo = &self.imp().danmaku_server_combo;
+        self.imp().rebuilding_danmaku_server_list.set(true);
         combo.set_model(Some(&model));
         combo.set_selected(danmaku_server_to_combo_index(active));
+        self.imp().rebuilding_danmaku_server_list.set(false);
     }
 
     #[cfg(target_os = "linux")]
@@ -1603,9 +1629,27 @@ impl MPVPage {
     #[template_callback]
     #[cfg(target_os = "linux")]
     fn on_danmaku_server_combo_changed(&self, _pspec: glib::ParamSpec) {
+        if self.imp().rebuilding_danmaku_server_list.get() {
+            return;
+        }
+
         let selected = self.imp().danmaku_server_combo.selected();
-        let _ = SETTINGS.set_danmaku_active_server(danmaku_combo_to_server_index(selected));
+        let active = danmaku_combo_to_server_index(selected);
+        if SETTINGS.danmaku_active_server() == active {
+            return;
+        }
+
+        let _ = SETTINGS.set_danmaku_active_server(active);
         self.apply_active_danmaku_server();
+        glib::idle_add_local_once(glib::clone!(
+            #[weak(rename_to = obj)]
+            self,
+            move || {
+                if obj.imp().danmaku_popover.is_visible() {
+                    obj.imp().danmaku_server_waiting_outside_click.set(true);
+                }
+            }
+        ));
     }
 
     #[cfg(target_os = "linux")]
