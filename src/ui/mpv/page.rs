@@ -1883,6 +1883,7 @@ impl MPVPage {
                         imp.spinner.set_visible(false);
                         imp.loading_box.set_visible(false);
                         imp.video.resume_cached(start_seconds);
+                        imp.video.refresh_danmaku_timeline();
                         return;
                     }
                 }
