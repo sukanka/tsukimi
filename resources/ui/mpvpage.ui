@@ -370,11 +370,11 @@
                                   </object>
                                 </child>
                                 <child>
-                                  <object class="GtkMenuButton" id="danmaku_button">
-                                    <property name="popover">danmaku_popover</property>
+                                  <object class="GtkButton" id="danmaku_button">
                                     <property name="icon-name">card-bulleted-symbolic</property>
                                     <property name="tooltip-text" translatable="yes">Danmaku Options</property>
                                     <property name="valign">center</property>
+                                    <signal name="clicked" handler="on_danmaku_button_clicked" swapped="yes" />
                                     <style>
                                       <class name="flat" />
                                       <class name="circular" />
@@ -758,13 +758,12 @@
               </object>
             </child>
             <child>
-              <object class="AdwPreferencesGroup">
+              <object class="AdwPreferencesGroup" id="danmaku_server_group">
                 <property name="title" translatable="yes">Danmaku Server</property>
                 <property name="sensitive" bind-source="danmaku_switch" bind-property="active" bind-flags="sync-create" />
                 <child>
-                  <object class="AdwComboRow" id="danmaku_server_combo">
+                  <object class="AdwExpanderRow" id="danmaku_server_expander">
                     <property name="title" translatable="yes">Server</property>
-                    <signal name="notify::selected" handler="on_danmaku_server_combo_changed" swapped="yes" />
                   </object>
                 </child>
               </object>
