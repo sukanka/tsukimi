@@ -102,6 +102,13 @@ mod imp {
                     danmaku.set_vexpand(true);
                     danmaku.set_can_target(false);
                     danmaku.set_opacity(SETTINGS.danmaku_opacity());
+                    danmaku.set_speed_factor(SETTINGS.danmaku_speed());
+                    danmaku.set_font_size(SETTINGS.danmaku_font_size());
+                    danmaku.set_intensity(SETTINGS.danmaku_intensity().round() as u32);
+                    danmaku.set_font_weight(SETTINGS.danmaku_font_weight().round() as u32);
+                    danmaku.set_spacing_factor(SETTINGS.danmaku_spacing_factor());
+                    danmaku.set_outline_px(SETTINGS.danmaku_outline_px());
+                    danmaku.set_shadow_offset(SETTINGS.danmaku_shadow_offset());
                     danmaku.set_visible(SETTINGS.is_danmaku_enabled());
                     overlay.add_overlay(&danmaku);
 
@@ -401,7 +408,7 @@ impl MPVVideo {
     pub fn set_speed(&self, value: f64) {
         #[cfg(target_os = "linux")]
         if let Some(danmaku) = self.danmaku() {
-            danmaku.set_speed_factor(value as f32);
+            danmaku.set_speed_factor(value);
         }
 
         #[cfg(target_os = "linux")]
@@ -633,7 +640,52 @@ impl MPVVideo {
     pub fn set_danmaku_speed(&self, value: f64) {
         #[cfg(target_os = "linux")]
         if let Some(danmaku) = self.danmaku() {
-            danmaku.set_speed_factor(value as f32);
+            danmaku.set_speed_factor(value);
+        }
+    }
+
+    pub fn set_danmaku_font_size(&self, value: f64) {
+        #[cfg(target_os = "linux")]
+        if let Some(danmaku) = self.danmaku() {
+            danmaku.set_font_size(value);
+        }
+    }
+
+    pub fn set_danmaku_intensity(&self, value: f64) {
+        #[cfg(target_os = "linux")]
+        if let Some(danmaku) = self.danmaku() {
+            danmaku.set_intensity(value.round().clamp(0.0, 3.0) as u32);
+            if self.imp().danmaku_loaded.get() {
+                danmaku.preroll_seek(self.imp().last_position.get() * 1000.0);
+            }
+        }
+    }
+
+    pub fn set_danmaku_font_weight(&self, value: f64) {
+        #[cfg(target_os = "linux")]
+        if let Some(danmaku) = self.danmaku() {
+            danmaku.set_font_weight(value.round() as u32);
+        }
+    }
+
+    pub fn set_danmaku_spacing_factor(&self, value: f64) {
+        #[cfg(target_os = "linux")]
+        if let Some(danmaku) = self.danmaku() {
+            danmaku.set_spacing_factor(value);
+        }
+    }
+
+    pub fn set_danmaku_outline_px(&self, value: f64) {
+        #[cfg(target_os = "linux")]
+        if let Some(danmaku) = self.danmaku() {
+            danmaku.set_outline_px(value);
+        }
+    }
+
+    pub fn set_danmaku_shadow_offset(&self, value: f64) {
+        #[cfg(target_os = "linux")]
+        if let Some(danmaku) = self.danmaku() {
+            danmaku.set_shadow_offset(value);
         }
     }
 

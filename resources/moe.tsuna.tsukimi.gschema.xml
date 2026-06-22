@@ -211,6 +211,34 @@
       <summary>Danmaku opacity</summary>
       <default>1.0</default>
     </key>
+    <key type="d" name="danmaku-speed">
+      <summary>Danmaku speed</summary>
+      <default>1.0</default>
+    </key>
+    <key type="d" name="danmaku-font-size">
+      <summary>Danmaku font size</summary>
+      <default>24.0</default>
+    </key>
+    <key type="d" name="danmaku-font-weight">
+      <summary>Danmaku font weight</summary>
+      <default>5.0</default>
+    </key>
+    <key type="d" name="danmaku-intensity">
+      <summary>Danmaku intensity</summary>
+      <default>1.0</default>
+    </key>
+    <key type="d" name="danmaku-spacing-factor">
+      <summary>Danmaku line spacing factor</summary>
+      <default>1.5</default>
+    </key>
+    <key type="d" name="danmaku-outline-px">
+      <summary>Danmaku outline width</summary>
+      <default>1.0</default>
+    </key>
+    <key type="d" name="danmaku-shadow-offset">
+      <summary>Danmaku shadow offset</summary>
+      <default>1.0</default>
+    </key>
     <key name="is-refresh" type="b">
       <summary>Frefresh when returning to home page</summary>
       <default>false</default>

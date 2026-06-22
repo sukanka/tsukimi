@@ -630,13 +630,93 @@
                 </child>
                 <child>
                   <object class="AdwActionRow">
-                    <property name="title" translatable="yes">Danmaku Speed</property>
+                    <property name="title" translatable="yes">Display Area</property>
                     <child type="suffix">
-                      <object class="GtkSpinButton" id="danmaku_speed_size">
+                      <object class="GtkSpinButton" id="danmaku_intensity">
                         <property name="width-request">64</property>
                         <property name="valign">center</property>
-                        <property name="adjustment">danmaku_speed_adj</property>
-                        <property name="digits">2</property>
+                        <property name="adjustment">danmaku_intensity_adj</property>
+                      </object>
+                    </child>
+                  </object>
+                </child>
+                <child>
+                  <object class="AdwExpanderRow">
+                    <property name="title" translatable="yes">More Appearance Settings</property>
+                    <child>
+                      <object class="AdwActionRow">
+                        <property name="title" translatable="yes">Danmaku Speed</property>
+                        <child type="suffix">
+                          <object class="GtkSpinButton" id="danmaku_speed_size">
+                            <property name="width-request">64</property>
+                            <property name="valign">center</property>
+                            <property name="adjustment">danmaku_speed_adj</property>
+                            <property name="digits">2</property>
+                          </object>
+                        </child>
+                      </object>
+                    </child>
+                    <child>
+                      <object class="AdwActionRow">
+                        <property name="title" translatable="yes">Font Size</property>
+                        <child type="suffix">
+                          <object class="GtkSpinButton" id="danmaku_font_size">
+                            <property name="width-request">64</property>
+                            <property name="valign">center</property>
+                            <property name="adjustment">danmaku_font_size_adj</property>
+                          </object>
+                        </child>
+                      </object>
+                    </child>
+                    <child>
+                      <object class="AdwActionRow">
+                        <property name="title" translatable="yes">Font Weight</property>
+                        <child type="suffix">
+                          <object class="GtkSpinButton" id="danmaku_font_weight">
+                            <property name="width-request">64</property>
+                            <property name="valign">center</property>
+                            <property name="adjustment">danmaku_font_weight_adj</property>
+                          </object>
+                        </child>
+                      </object>
+                    </child>
+                    <child>
+                      <object class="AdwActionRow">
+                        <property name="title" translatable="yes">Line Spacing</property>
+                        <child type="suffix">
+                          <object class="GtkSpinButton" id="danmaku_spacing_factor">
+                            <property name="width-request">64</property>
+                            <property name="valign">center</property>
+                            <property name="adjustment">danmaku_spacing_factor_adj</property>
+                            <property name="digits">1</property>
+                          </object>
+                        </child>
+                      </object>
+                    </child>
+                    <child>
+                      <object class="AdwActionRow">
+                        <property name="title" translatable="yes">Outline</property>
+                        <child type="suffix">
+                          <object class="GtkSpinButton" id="danmaku_outline_px">
+                            <property name="width-request">64</property>
+                            <property name="valign">center</property>
+                            <property name="adjustment">danmaku_outline_px_adj</property>
+                            <property name="digits">1</property>
+                          </object>
+                        </child>
+                      </object>
+                    </child>
+                    <child>
+                      <object class="AdwActionRow">
+                        <property name="title" translatable="yes">Shadow</property>
+                        <child type="suffix">
+                          <object class="GtkSpinButton" id="danmaku_shadow_offset">
+                            <property name="width-request">64</property>
+                            <property name="valign">center</property>
+                            <property name="adjustment">danmaku_shadow_offset_adj</property>
+                            <property name="digits">1</property>
+                          </object>
+                        </child>
                       </object>
                     </child>
                   </object>
@@ -708,52 +788,52 @@
     </child>
   </object>
 
-  <object class="GtkAdjustment" id="danmaku_top_padding_adj">
-    <property name="lower">0</property>
-    <property name="upper">50</property>
-    <property name="value">10</property>
-    <property name="step_increment">1</property>
-    <property name="page_increment">4</property>
-  </object>
-
   <object class="GtkAdjustment" id="danmaku_font_size_adj">
-    <property name="lower">0</property>
-    <property name="upper">100</property>
+    <property name="lower">12</property>
+    <property name="upper">64</property>
     <property name="value">24</property>
     <property name="step_increment">1</property>
     <property name="page_increment">4</property>
   </object>
 
-  <object class="GtkAdjustment" id="scroll_danmaku_max_lines_adj">
+  <object class="GtkAdjustment" id="danmaku_intensity_adj">
     <property name="lower">0</property>
-    <property name="upper">80</property>
-    <property name="value">20</property>
+    <property name="upper">3</property>
+    <property name="value">1</property>
     <property name="step_increment">1</property>
-    <property name="page_increment">4</property>
+    <property name="page_increment">1</property>
   </object>
 
-  <object class="GtkAdjustment" id="danmaku_row_spacing_adj">
+  <object class="GtkAdjustment" id="danmaku_font_weight_adj">
     <property name="lower">0</property>
-    <property name="upper">50</property>
-    <property name="value">10</property>
-    <property name="step_increment">1</property>
-    <property name="page_increment">4</property>
-  </object>
-
-  <object class="GtkAdjustment" id="topcenter_danmaku_max_lines_adj">
-    <property name="lower">0</property>
-    <property name="upper">12</property>
+    <property name="upper">11</property>
     <property name="value">5</property>
     <property name="step_increment">1</property>
-    <property name="page_increment">4</property>
+    <property name="page_increment">1</property>
   </object>
 
-  <object class="GtkAdjustment" id="bottomcenter_danmaku_max_lines_adj">
+  <object class="GtkAdjustment" id="danmaku_spacing_factor_adj">
+    <property name="lower">1.0</property>
+    <property name="upper">3.0</property>
+    <property name="value">1.5</property>
+    <property name="step_increment">0.1</property>
+    <property name="page_increment">0.2</property>
+  </object>
+
+  <object class="GtkAdjustment" id="danmaku_outline_px_adj">
     <property name="lower">0</property>
-    <property name="upper">12</property>
-    <property name="value">5</property>
-    <property name="step_increment">1</property>
-    <property name="page_increment">4</property>
+    <property name="upper">4</property>
+    <property name="value">1</property>
+    <property name="step_increment">0.5</property>
+    <property name="page_increment">1</property>
+  </object>
+
+  <object class="GtkAdjustment" id="danmaku_shadow_offset_adj">
+    <property name="lower">0</property>
+    <property name="upper">4</property>
+    <property name="value">1</property>
+    <property name="step_increment">0.5</property>
+    <property name="page_increment">1</property>
   </object>
 
   <object class="GtkAdjustment" id="danmaku_speed_adj">

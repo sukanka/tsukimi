@@ -2858,7 +2858,7 @@ checksum = "956787520e75e9bd233246045d19f42fb73242759cc57fba9611d940ae96d4b0"
 [[package]]
 name = "mutsumi"
 version = "0.1.0"
-source = "git+https://github.com/tsukinaha/mutsumi.git#ef98841658c71dad9e351694408f46add03588cb"
+source = "git+https://github.com/tsukinaha/mutsumi.git#77d6c65cf6fd9f2f7bafbd2466c87a72e6ca8995"
 dependencies = [
  "ash",
  "atomic-wait",
@@ -2895,7 +2895,7 @@ dependencies = [
 [[package]]
 name = "mutsumi-utils"
 version = "0.1.0"
-source = "git+https://github.com/tsukinaha/mutsumi.git#ef98841658c71dad9e351694408f46add03588cb"
+source = "git+https://github.com/tsukinaha/mutsumi.git#77d6c65cf6fd9f2f7bafbd2466c87a72e6ca8995"
 dependencies = [
  "glib",
  "tokio",
