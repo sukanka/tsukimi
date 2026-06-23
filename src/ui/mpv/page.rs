@@ -2647,11 +2647,12 @@ impl MPVPage {
         let current_video = self.current_video();
 
         self.imp().video.set_pause(true);
+        self.imp().video.pause_cache_fill();
         // Keep the video loaded in mpv to preserve the demuxer cache.
         // Previously mpv.stop() was called here, which unloaded the file
         // and discarded the entire buffer, forcing a full re-buffer on resume.
-        // Now we only pause — the cache survives until the app exits or a
-        // different video is loaded.
+        // Now we pause playback and suspend forward cache fill; the existing
+        // cache is reused when playback resumes.
         let imp = self.imp();
         imp.cached_video_id
             .replace(self.current_video().map(|v| v.id()));
