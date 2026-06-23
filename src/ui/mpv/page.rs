@@ -688,6 +688,7 @@ mod imp {
             }
 
             obj.set_popover();
+            obj.disable_playback_tooltips();
 
             obj.connect_root_notify(|obj| {
                 if let Some(window) = obj.root().and_downcast::<gtk::Window>() {
@@ -749,6 +750,7 @@ mod imp {
                 menu_actions_play_pause_button.set_tooltip_text(Some(&gettext("Pause")));
             }
             self.paused.set(paused);
+            self.obj().disable_playback_tooltips();
         }
     }
 }
@@ -770,6 +772,23 @@ impl Default for MPVPage {
 impl MPVPage {
     pub fn new() -> Self {
         Object::new()
+    }
+
+    fn disable_tooltips(widget: &gtk::Widget) {
+        widget.set_tooltip_text(None);
+        widget.set_has_tooltip(false);
+
+        let mut child = widget.first_child();
+        while let Some(widget) = child {
+            child = widget.next_sibling();
+            Self::disable_tooltips(&widget);
+        }
+    }
+
+    fn disable_playback_tooltips(&self) {
+        // Native tooltips create popup surfaces that can disturb video-overlay frame pacing.
+        Self::disable_tooltips(self.upcast_ref());
+        Self::disable_tooltips(self.imp().menu_actions.upcast_ref());
     }
 
     #[cfg(target_os = "linux")]
