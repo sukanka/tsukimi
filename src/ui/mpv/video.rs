@@ -212,6 +212,7 @@ impl MPVVideo {
         self.imp().pending_file_loaded.set(true);
         self.imp().loaded.set(false);
         self.clear_danmaku();
+        self.resume_cache_fill();
 
         #[cfg(target_os = "linux")]
         if let Some(player) = self.mutsumi() {
@@ -247,6 +248,7 @@ impl MPVVideo {
         self.imp().last_position.set(start_seconds);
         self.preroll_danmaku(start_seconds * 1000.0);
         self.sync_danmaku_playback();
+        self.resume_cache_fill();
 
         #[cfg(target_os = "linux")]
         if let Some(player) = self.mutsumi() {
@@ -529,6 +531,14 @@ impl MPVVideo {
         if let Some(player) = self.libmpv() {
             player.set_property(property, value);
         }
+    }
+
+    pub fn pause_cache_fill(&self) {
+        self.set_property("cache-secs", 0_i64);
+    }
+
+    pub fn resume_cache_fill(&self) {
+        self.set_property("cache-secs", SETTINGS.mpv_cache_time() as i64);
     }
 
     pub fn mark_loaded(&self) {
