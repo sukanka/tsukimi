@@ -352,8 +352,28 @@
         <property name="icon-name">card-bulleted-symbolic</property>
         <child>
           <object class="AdwPreferencesGroup">
-            <property name="title" translatable="yes">DanDanPlay API</property>
-            <property name="description" translatable="yes">Custom servers compatible with dandanplay API protocol</property>
+            <property name="title" translatable="yes">dandanplay</property>
+            <property name="description" translatable="yes">The built-in App ID uses Tsukimi's internal App Secret. Fill App Secret only when using a custom App ID.</property>
+            <child>
+              <object class="AdwEntryRow" id="settings_danmaku_appid_row">
+                <property name="title">App ID</property>
+                <property name="show-apply-button">false</property>
+                <signal name="changed" handler="on_settings_danmaku_appid_changed" swapped="yes"/>
+              </object>
+            </child>
+            <child>
+              <object class="AdwPasswordEntryRow" id="settings_danmaku_appsecret_row">
+                <property name="title">App Secret</property>
+                <property name="show-apply-button">false</property>
+                <signal name="changed" handler="on_settings_danmaku_appsecret_changed" swapped="yes"/>
+              </object>
+            </child>
+          </object>
+        </child>
+        <child>
+          <object class="AdwPreferencesGroup">
+            <property name="title" translatable="yes">Danmaku Servers</property>
+            <property name="description" translatable="yes">Third-party servers compatible with dandanplay API protocol do not require App ID or App Secret</property>
             <child>
               <object class="AdwComboRow" id="settings_danmaku_server_combo">
                 <property name="title" translatable="yes">Active Server</property>
@@ -362,7 +382,8 @@
             </child>
             <child>
               <object class="AdwExpanderRow" id="settings_danmaku_server_mgr_row">
-                <property name="title" translatable="yes">Add Custom Server</property>
+                <property name="title" translatable="yes">Edit Selected Custom Server</property>
+                <property name="visible">false</property>
                 <child>
                   <object class="AdwEntryRow" id="settings_danmaku_server_name_row">
                     <property name="title" translatable="yes">Name</property>
@@ -371,6 +392,33 @@
                 </child>
                 <child>
                   <object class="AdwEntryRow" id="settings_danmaku_server_url_row">
+                    <property name="title" translatable="yes">URL</property>
+                    <property name="show-apply-button">false</property>
+                  </object>
+                </child>
+                <child>
+                  <object class="AdwButtonRow" id="settings_danmaku_server_update_btn">
+                    <property name="title" translatable="yes">Update</property>
+                    <signal name="activated" handler="on_settings_danmaku_server_update_clicked" swapped="yes"/>
+                    <property name="start-icon-name">document-edit-symbolic</property>
+                    <style>
+                      <class name="suggested-action"/>
+                    </style>
+                  </object>
+                </child>
+              </object>
+            </child>
+            <child>
+              <object class="AdwExpanderRow">
+                <property name="title" translatable="yes">Add Custom Server</property>
+                <child>
+                  <object class="AdwEntryRow" id="settings_danmaku_server_add_name_row">
+                    <property name="title" translatable="yes">Name</property>
+                    <property name="show-apply-button">false</property>
+                  </object>
+                </child>
+                <child>
+                  <object class="AdwEntryRow" id="settings_danmaku_server_add_url_row">
                     <property name="title" translatable="yes">URL</property>
                     <property name="show-apply-button">false</property>
                   </object>
@@ -390,6 +438,7 @@
             <child>
               <object class="AdwButtonRow" id="settings_danmaku_server_remove_btn">
                 <property name="title" translatable="yes">Remove Selected Server</property>
+                <property name="visible">false</property>
                 <signal name="activated" handler="on_settings_danmaku_server_remove_clicked" swapped="yes"/>
                 <property name="start-icon-name">user-trash-symbolic</property>
                 <style>

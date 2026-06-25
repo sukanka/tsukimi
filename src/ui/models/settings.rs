@@ -193,10 +193,6 @@ impl Settings {
         self.set_boolean(Self::KEY_IS_DANMAKU_ENABLED, is_danmaku_enabled)
     }
 
-    pub fn has_danmaku_custom_credentials_keys(&self) -> bool {
-        self.has_key(Self::KEY_DANMAKU_APPID) && self.has_key(Self::KEY_DANMAKU_APPSECRET)
-    }
-
     pub fn danmaku_appid(&self) -> String {
         if !self.has_key(Self::KEY_DANMAKU_APPID) {
             return String::new();

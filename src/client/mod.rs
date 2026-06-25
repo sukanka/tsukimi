@@ -20,7 +20,7 @@ pub use account::{
 pub use dandan::*;
 pub use proxy::ReqClient;
 
-pub const DEFAULT_DANMAKU_SERVER_LABEL: &str = "Default (api.dandanplay.net)";
+pub const DEFAULT_DANMAKU_SERVER_LABEL: &str = "dandanplay";
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct DanmakuServer {
@@ -48,4 +48,70 @@ pub fn apply_danmaku_active_server(active: i32, servers: &[DanmakuServer]) {
 
     #[cfg(not(target_os = "linux"))]
     let _ = (active, servers);
+}
+
+pub fn default_danmaku_appid() -> &'static str {
+    #[cfg(target_os = "linux")]
+    {
+        X_APPID
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    {
+        ""
+    }
+}
+
+pub fn is_default_danmaku_credentials(appid: &str, appsecret: &str) -> bool {
+    let appid = appid.trim();
+    let appsecret = appsecret.trim();
+    appsecret.is_empty() && (appid.is_empty() || appid == default_danmaku_appid())
+}
+
+pub fn has_complete_danmaku_credentials(appid: &str, appsecret: &str) -> bool {
+    !appid.trim().is_empty() && !appsecret.trim().is_empty()
+}
+
+pub fn init_danmaku_client_without_credentials() -> Result<(), String> {
+    #[cfg(target_os = "linux")]
+    {
+        dandanapi::DanDanClient::init(String::new(), String::new())
+            .map_err(|error| error.to_string())
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    {
+        Ok(())
+    }
+}
+
+pub fn init_danmaku_client_credentials(appid: &str, appsecret: &str) -> Result<(), String> {
+    #[cfg(target_os = "linux")]
+    {
+        let appid = appid.trim();
+        let appsecret = appsecret.trim();
+        if !is_default_danmaku_credentials(appid, appsecret)
+            && !has_complete_danmaku_credentials(appid, appsecret)
+        {
+            return Err("Please fill App Secret when using a custom App ID.".to_string());
+        }
+
+        let init_result = if is_default_danmaku_credentials(appid, appsecret) {
+            let generator = dandanapi::SecretGenerator::new(
+                include_bytes!("../../secret/secret").to_vec(),
+                SECRETE_KEY.to_string(),
+            );
+            dandanapi::DanDanClient::init(X_APPID.to_string(), generator)
+        } else {
+            dandanapi::DanDanClient::init(appid.to_string(), appsecret.to_string())
+        };
+
+        init_result.map_err(|error| error.to_string())
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = (appid, appsecret);
+        Ok(())
+    }
 }
