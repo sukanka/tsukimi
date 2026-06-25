@@ -7,6 +7,10 @@ use crate::{
         apply_danmaku_active_server,
         danmaku_combo_to_server_index,
         danmaku_server_to_combo_index,
+        default_danmaku_appid,
+        has_complete_danmaku_credentials,
+        init_danmaku_client_credentials,
+        is_default_danmaku_credentials,
         jellyfin_client::JELLYFIN_CLIENT,
     },
     ui::{
@@ -146,6 +150,11 @@ mod imp {
         pub folder_button_content: TemplateChild<adw::ButtonContent>,
 
         #[template_child]
+        pub settings_danmaku_appid_row: TemplateChild<adw::EntryRow>,
+        #[template_child]
+        pub settings_danmaku_appsecret_row: TemplateChild<adw::PasswordEntryRow>,
+
+        #[template_child]
         pub settings_danmaku_server_combo: TemplateChild<adw::ComboRow>,
         #[template_child]
         pub settings_danmaku_server_mgr_row: TemplateChild<adw::ExpanderRow>,
@@ -154,9 +163,13 @@ mod imp {
         #[template_child]
         pub settings_danmaku_server_url_row: TemplateChild<adw::EntryRow>,
         #[template_child]
-        pub settings_danmaku_server_add_btn: TemplateChild<adw::ButtonRow>,
+        pub settings_danmaku_server_add_name_row: TemplateChild<adw::EntryRow>,
+        #[template_child]
+        pub settings_danmaku_server_add_url_row: TemplateChild<adw::EntryRow>,
         #[template_child]
         pub settings_danmaku_server_remove_btn: TemplateChild<adw::ButtonRow>,
+
+        pub loading_dandanplay_credentials: Cell<bool>,
 
         pub now_editing_descriptor: RefCell<Option<Descriptor>>,
 
@@ -227,6 +240,7 @@ mod imp {
             obj.set_color();
             obj.bind_settings();
             obj.refersh_descriptors();
+            obj.load_dandanplay_credentials();
             obj.rebuild_danmaku_server_list();
         }
     }
@@ -812,6 +826,65 @@ impl AccountSettings {
         );
     }
 
+    fn load_dandanplay_credentials(&self) {
+        let appid = SETTINGS.danmaku_appid();
+        self.imp().loading_dandanplay_credentials.set(true);
+        self.imp()
+            .settings_danmaku_appid_row
+            .set_text(if appid.is_empty() {
+                default_danmaku_appid()
+            } else {
+                &appid
+            });
+        self.imp()
+            .settings_danmaku_appsecret_row
+            .set_text(&SETTINGS.danmaku_appsecret());
+        self.imp().loading_dandanplay_credentials.set(false);
+    }
+
+    fn save_dandanplay_credentials(&self) {
+        if self.imp().loading_dandanplay_credentials.get() {
+            return;
+        }
+
+        let appid = self
+            .imp()
+            .settings_danmaku_appid_row
+            .text()
+            .trim()
+            .to_string();
+        let appsecret = self
+            .imp()
+            .settings_danmaku_appsecret_row
+            .text()
+            .trim()
+            .to_string();
+
+        if !is_default_danmaku_credentials(&appid, &appsecret)
+            && !has_complete_danmaku_credentials(&appid, &appsecret)
+        {
+            return;
+        }
+
+        if SETTINGS.set_danmaku_appid(&appid).is_err()
+            || SETTINGS.set_danmaku_appsecret(&appsecret).is_err()
+        {
+            self.toast(gettext("Failed to save danmaku credentials."));
+            return;
+        }
+
+        if SETTINGS.danmaku_active_server() >= 0 {
+            return;
+        }
+
+        if let Err(error) = init_danmaku_client_credentials(&appid, &appsecret) {
+            self.toast(format!(
+                "{}: {error}",
+                gettext("Danmaku credential is invalid")
+            ));
+        }
+    }
+
     fn rebuild_danmaku_server_list(&self) {
         let servers = SETTINGS.danmaku_servers();
         let active = SETTINGS.danmaku_active_server();
@@ -828,8 +901,11 @@ impl AccountSettings {
             .settings_danmaku_server_combo
             .set_selected(danmaku_server_to_combo_index(active));
         self.imp()
+            .settings_danmaku_server_mgr_row
+            .set_visible(active >= 0 && (active as usize) < servers.len());
+        self.imp()
             .settings_danmaku_server_remove_btn
-            .set_visible(active >= 0);
+            .set_visible(active >= 0 && (active as usize) < servers.len());
     }
 
     fn fill_danmaku_server_fields(&self) {
@@ -843,44 +919,73 @@ impl AccountSettings {
             self.imp()
                 .settings_danmaku_server_url_row
                 .set_text(&server.url);
-            self.imp()
-                .settings_danmaku_server_add_btn
-                .set_title(&gettext("Update"));
-            self.imp()
-                .settings_danmaku_server_add_btn
-                .set_start_icon_name(Some("document-edit-symbolic"));
-            self.imp()
-                .settings_danmaku_server_mgr_row
-                .set_title(&gettext("Edit Custom Server"));
+            self.imp().settings_danmaku_server_mgr_row.set_visible(true);
         } else {
             self.imp().settings_danmaku_server_name_row.set_text("");
             self.imp().settings_danmaku_server_url_row.set_text("");
             self.imp()
-                .settings_danmaku_server_add_btn
-                .set_title(&gettext("Add"));
-            self.imp()
-                .settings_danmaku_server_add_btn
-                .set_start_icon_name(Some("list-add-symbolic"));
-            self.imp()
                 .settings_danmaku_server_mgr_row
-                .set_title(&gettext("Add Custom Server"));
+                .set_visible(false);
         }
+    }
+
+    #[template_callback]
+    fn on_settings_danmaku_appid_changed(&self, _entry: &adw::EntryRow) {
+        self.save_dandanplay_credentials();
+    }
+
+    #[template_callback]
+    fn on_settings_danmaku_appsecret_changed(&self, _entry: &adw::PasswordEntryRow) {
+        self.save_dandanplay_credentials();
     }
 
     #[template_callback]
     fn on_settings_danmaku_server_combo_changed(&self, _pspec: glib::ParamSpec) {
         let active =
             danmaku_combo_to_server_index(self.imp().settings_danmaku_server_combo.selected());
+        let servers = SETTINGS.danmaku_servers();
+        let has_selected_custom_server = active >= 0 && (active as usize) < servers.len();
         let _ = SETTINGS.set_danmaku_active_server(active);
         self.apply_danmaku_active_server();
         self.imp()
             .settings_danmaku_server_remove_btn
-            .set_visible(active >= 0);
+            .set_visible(has_selected_custom_server);
         self.fill_danmaku_server_fields();
     }
 
     #[template_callback]
     fn on_settings_danmaku_server_add_clicked(&self) {
+        let name = self
+            .imp()
+            .settings_danmaku_server_add_name_row
+            .text()
+            .trim()
+            .to_string();
+        let url = self
+            .imp()
+            .settings_danmaku_server_add_url_row
+            .text()
+            .trim()
+            .to_string();
+        if name.is_empty() || url.is_empty() {
+            self.toast(gettext("Please fill in both name and URL."));
+            return;
+        }
+        let new_server = DanmakuServer { name, url };
+
+        if SETTINGS.add_danmaku_server(new_server).is_err() {
+            self.toast(gettext("Failed to save server."));
+            return;
+        }
+
+        self.imp().settings_danmaku_server_add_name_row.set_text("");
+        self.imp().settings_danmaku_server_add_url_row.set_text("");
+        self.rebuild_danmaku_server_list();
+        self.fill_danmaku_server_fields();
+    }
+
+    #[template_callback]
+    fn on_settings_danmaku_server_update_clicked(&self) {
         let name = self
             .imp()
             .settings_danmaku_server_name_row
@@ -914,8 +1019,7 @@ impl AccountSettings {
                 self.toast(gettext("Failed to update server."));
                 return;
             }
-        } else if SETTINGS.add_danmaku_server(new_server).is_err() {
-            self.toast(gettext("Failed to save server."));
+        } else {
             return;
         }
 
@@ -940,6 +1044,7 @@ impl AccountSettings {
             let _ = SETTINGS.set_danmaku_active_server(0);
         }
         self.rebuild_danmaku_server_list();
+        self.fill_danmaku_server_fields();
         self.apply_danmaku_active_server();
     }
 }

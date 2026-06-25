@@ -326,7 +326,7 @@
     </key>
     <key name="danmaku-active-server" type="i">
       <summary>Active danmaku server index</summary>
-      <description>-1 = default (api.dandanplay.net), 0+ = index into custom servers list</description>
+      <description>-1 = dandanplay, 0+ = index into custom servers list</description>
       <default>-1</default>
     </key>
   </schema>
