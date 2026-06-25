@@ -119,8 +119,6 @@ use crate::{
 use crate::client::{
     DanmakuConvert,
     apply_danmaku_active_server,
-    danmaku_combo_to_server_index,
-    danmaku_server_to_combo_index,
     has_complete_danmaku_credentials,
     init_danmaku_client_credentials,
     init_danmaku_client_without_credentials,
@@ -231,6 +229,7 @@ mod imp {
                 video_scale::VideoScale,
             },
             provider::tu_item::TuItem,
+            widgets::check_row::CheckRow,
         },
     };
 
@@ -287,7 +286,9 @@ mod imp {
         #[template_child]
         pub danmaku_switch: TemplateChild<gtk::Switch>,
         #[template_child]
-        pub danmaku_server_combo: TemplateChild<adw::ComboRow>,
+        pub danmaku_server_group: TemplateChild<adw::PreferencesGroup>,
+        #[template_child]
+        pub danmaku_server_expander: TemplateChild<adw::ExpanderRow>,
         #[template_child]
         pub danmaku_anime_row: TemplateChild<adw::EntryRow>,
         #[template_child]
@@ -369,9 +370,7 @@ mod imp {
         #[cfg(target_os = "linux")]
         pub danmaku_search_generation: Cell<u64>,
         #[cfg(target_os = "linux")]
-        pub rebuilding_danmaku_server_list: Cell<bool>,
-        #[cfg(target_os = "linux")]
-        pub danmaku_server_waiting_outside_click: Cell<bool>,
+        pub danmaku_server_rows: RefCell<Vec<CheckRow>>,
         #[cfg(target_os = "linux")]
         pub danmaku_anime_candidates: RefCell<Vec<String>>,
         #[cfg(target_os = "linux")]
@@ -621,42 +620,16 @@ mod imp {
                 obj.rebuild_danmaku_server_list();
 
                 self.danmaku_popover.set_parent(&self.danmaku_button.get());
-                self.danmaku_popover.connect_show(glib::clone!(
-                    #[weak]
-                    obj,
-                    move |_| {
-                        obj.prepare_danmaku_popover();
-                    }
-                ));
                 self.danmaku_popover.connect_closed(glib::clone!(
                     #[weak]
                     obj,
                     move |_| {
                         obj.cancel_danmaku_search();
-                        obj.imp().danmaku_server_waiting_outside_click.set(false);
+                        obj.imp().danmaku_server_expander.set_expanded(false);
                         obj.set_can_fade_cursor_set(true);
                         obj.reset_fade_timeout();
                     }
                 ));
-
-                let danmaku_popover_click = gtk::GestureClick::new();
-                danmaku_popover_click.set_button(0);
-                danmaku_popover_click.set_propagation_phase(gtk::PropagationPhase::Capture);
-                danmaku_popover_click.connect_pressed(glib::clone!(
-                    #[weak]
-                    obj,
-                    move |gesture, _, x, y| {
-                        let imp = obj.imp();
-                        if imp.danmaku_server_waiting_outside_click.get()
-                            && imp.danmaku_popover.is_visible()
-                            && !imp.danmaku_popover.contains(x, y)
-                        {
-                            obj.close_danmaku_popover();
-                            gesture.set_state(gtk::EventSequenceState::Claimed);
-                        }
-                    }
-                ));
-                self.danmaku_popover.add_controller(danmaku_popover_click);
 
                 let danmaku_outside_click = gtk::GestureClick::new();
                 danmaku_outside_click.set_button(0);
@@ -833,21 +806,87 @@ impl MPVPage {
     }
 
     #[cfg(target_os = "linux")]
+    fn update_danmaku_server_selection(&self, active: i32) {
+        let imp = self.imp();
+        let active_label = Self::danmaku_server_label(active);
+        imp.danmaku_server_expander
+            .set_subtitle(&glib::markup_escape_text(&active_label));
+
+        for (index, row) in imp.danmaku_server_rows.borrow().iter().enumerate() {
+            row.imp().check.set_active(index as i32 - 1 == active);
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    fn danmaku_server_label(active: i32) -> String {
+        let default_label = gettext(crate::client::DEFAULT_DANMAKU_SERVER_LABEL);
+        if active < 0 {
+            return default_label;
+        }
+
+        SETTINGS
+            .danmaku_servers()
+            .get(active as usize)
+            .map(|server| server.name.clone())
+            .unwrap_or(default_label)
+    }
+
+    #[cfg(target_os = "linux")]
     fn rebuild_danmaku_server_list(&self) {
         let servers = SETTINGS.danmaku_servers();
         let active = SETTINGS.danmaku_active_server();
-        let model =
-            gtk::StringList::new(&[gettext(crate::client::DEFAULT_DANMAKU_SERVER_LABEL).as_str()]);
+        let imp = self.imp();
 
-        for server in &servers {
-            model.append(&server.name);
+        for row in imp.danmaku_server_rows.borrow_mut().drain(..) {
+            imp.danmaku_server_expander.remove(&row);
         }
 
-        let combo = &self.imp().danmaku_server_combo;
-        self.imp().rebuilding_danmaku_server_list.set(true);
-        combo.set_model(Some(&model));
-        combo.set_selected(danmaku_server_to_combo_index(active));
-        self.imp().rebuilding_danmaku_server_list.set(false);
+        let default_label = gettext(crate::client::DEFAULT_DANMAKU_SERVER_LABEL);
+
+        let mut check_group: Option<gtk::CheckButton> = None;
+        let mut append_row = |label: String, server_index: i32| {
+            let row = CheckRow::new();
+            row.set_title(&glib::markup_escape_text(&label));
+
+            let check = row.imp().check.get();
+            if let Some(first_check) = check_group.as_ref() {
+                check.set_group(Some(first_check));
+            } else {
+                check_group = Some(check.clone());
+            }
+            check.set_active(active == server_index);
+
+            row.connect_activated(glib::clone!(
+                #[weak(rename_to = obj)]
+                self,
+                move |_| {
+                    obj.select_danmaku_server(server_index);
+                }
+            ));
+
+            imp.danmaku_server_expander.add_row(&row);
+            imp.danmaku_server_rows.borrow_mut().push(row);
+        };
+
+        append_row(default_label, -1);
+        for (index, server) in servers.into_iter().enumerate() {
+            append_row(server.name, index as i32);
+        }
+        self.update_danmaku_server_selection(active);
+    }
+
+    #[cfg(target_os = "linux")]
+    fn select_danmaku_server(&self, active: i32) {
+        if SETTINGS.danmaku_active_server() == active {
+            self.update_danmaku_server_selection(active);
+            self.imp().danmaku_server_expander.set_expanded(false);
+            return;
+        }
+
+        let _ = SETTINGS.set_danmaku_active_server(active);
+        self.update_danmaku_server_selection(active);
+        self.imp().danmaku_server_expander.set_expanded(false);
+        self.init_dandanapi_client();
     }
 
     #[cfg(target_os = "linux")]
@@ -1361,16 +1400,22 @@ impl MPVPage {
 
     #[template_callback]
     #[cfg(target_os = "linux")]
-    fn on_danmaku_button_clicked(&self, _button: &gtk::Button) {
-        let imp = self.imp();
-        self.set_can_fade_cursor_set(false);
-        self.set_reveal_overlay(true);
-        imp.danmaku_popover.popup();
-    }
+    fn on_danmaku_anime_candidate_changed(&self, _pspec: glib::ParamSpec) {}
 
     #[template_callback]
     #[cfg(target_os = "linux")]
-    fn on_danmaku_anime_candidate_changed(&self, _pspec: glib::ParamSpec) {}
+    fn on_danmaku_button_clicked(&self, _button: &gtk::Button) {
+        let imp = self.imp();
+        if imp.danmaku_popover.is_visible() {
+            self.close_danmaku_popover();
+            return;
+        }
+
+        self.set_can_fade_cursor_set(false);
+        self.set_reveal_overlay(true);
+        self.prepare_danmaku_popover();
+        imp.danmaku_popover.popup();
+    }
 
     #[template_callback]
     #[cfg(target_os = "linux")]
@@ -1612,32 +1657,6 @@ impl MPVPage {
     }
 
     #[template_callback]
-    #[cfg(target_os = "linux")]
-    fn on_danmaku_server_combo_changed(&self, _pspec: glib::ParamSpec) {
-        if self.imp().rebuilding_danmaku_server_list.get() {
-            return;
-        }
-
-        let selected = self.imp().danmaku_server_combo.selected();
-        let active = danmaku_combo_to_server_index(selected);
-        if SETTINGS.danmaku_active_server() == active {
-            return;
-        }
-
-        let _ = SETTINGS.set_danmaku_active_server(active);
-        self.init_dandanapi_client();
-        glib::idle_add_local_once(glib::clone!(
-            #[weak(rename_to = obj)]
-            self,
-            move || {
-                if obj.imp().danmaku_popover.is_visible() {
-                    obj.imp().danmaku_server_waiting_outside_click.set(true);
-                }
-            }
-        ));
-    }
-
-    #[template_callback]
     #[cfg(not(target_os = "linux"))]
     fn on_danmaku_switch_state_set(&self, _state: bool) -> bool {
         false
@@ -1645,19 +1664,15 @@ impl MPVPage {
 
     #[template_callback]
     #[cfg(not(target_os = "linux"))]
-    fn on_danmaku_button_clicked(&self, _button: &gtk::Button) {}
-
-    #[template_callback]
-    #[cfg(not(target_os = "linux"))]
     fn on_danmaku_anime_candidate_changed(&self, _pspec: glib::ParamSpec) {}
 
     #[template_callback]
     #[cfg(not(target_os = "linux"))]
-    async fn on_danmaku_search_clicked(&self) {}
+    fn on_danmaku_button_clicked(&self, _button: &gtk::Button) {}
 
     #[template_callback]
     #[cfg(not(target_os = "linux"))]
-    fn on_danmaku_server_combo_changed(&self, _pspec: glib::ParamSpec) {}
+    async fn on_danmaku_search_clicked(&self) {}
 
     fn mark_stream_failed(&self) {
         let imp = self.imp();
@@ -2739,12 +2754,6 @@ impl MPVPage {
 
     #[template_callback]
     fn left_click_cb(&self) {
-        #[cfg(target_os = "linux")]
-        if self.imp().danmaku_popover.is_visible() {
-            self.close_danmaku_popover();
-            return;
-        }
-
         self.imp().video.pause();
     }
 
