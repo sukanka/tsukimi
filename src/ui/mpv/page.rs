@@ -121,6 +121,10 @@ use crate::client::{
     apply_danmaku_active_server,
     danmaku_combo_to_server_index,
     danmaku_server_to_combo_index,
+    has_complete_danmaku_credentials,
+    init_danmaku_client_credentials,
+    init_danmaku_client_without_credentials,
+    is_default_danmaku_credentials,
 };
 
 const MIN_MOTION_TIME: i64 = 100000;
@@ -282,10 +286,6 @@ mod imp {
         pub danmaku_page: TemplateChild<adw::PreferencesPage>,
         #[template_child]
         pub danmaku_switch: TemplateChild<gtk::Switch>,
-        #[template_child]
-        pub danmaku_appid_row: TemplateChild<adw::EntryRow>,
-        #[template_child]
-        pub danmaku_appsecret_row: TemplateChild<adw::PasswordEntryRow>,
         #[template_child]
         pub danmaku_server_combo: TemplateChild<adw::ComboRow>,
         #[template_child]
@@ -480,19 +480,6 @@ mod imp {
                 SETTINGS
                     .bind("is-danmaku-enabled", &self.danmaku_switch.get(), "active")
                     .build();
-
-                if SETTINGS.has_danmaku_custom_credentials_keys() {
-                    SETTINGS
-                        .bind("danmaku-appid", &self.danmaku_appid_row.get(), "text")
-                        .build();
-                    SETTINGS
-                        .bind(
-                            "danmaku-appsecret",
-                            &self.danmaku_appsecret_row.get(),
-                            "text",
-                        )
-                        .build();
-                }
 
                 SETTINGS
                     .bind("danmaku-opacity", &self.danmaku_opacity_adj.get(), "value")
@@ -736,26 +723,27 @@ impl MPVPage {
 
         let appid = SETTINGS.danmaku_appid().trim().to_string();
         let appsecret = SETTINGS.danmaku_appsecret().trim().to_string();
-        let has_appid = !appid.is_empty();
-        let has_appsecret = !appsecret.is_empty();
+        let using_dandanplay = SETTINGS.danmaku_active_server() < 0;
+        let has_default_credentials = is_default_danmaku_credentials(&appid, &appsecret);
+        let has_custom_credentials = has_complete_danmaku_credentials(&appid, &appsecret);
 
-        if !has_appid && !has_appsecret {
-            self.set_key_vaild(false);
-            self.imp()
-                .danmaku_page
-                .set_description(&gettext("Set App ID and App Secret to load danmaku."));
-            return;
-        }
-
-        if has_appid ^ has_appsecret {
+        if using_dandanplay && !has_default_credentials && !has_custom_credentials {
             self.set_key_vaild(false);
             self.imp().danmaku_page.set_description(&gettext(
-                "Please fill both App ID and App Secret, or leave both empty.",
+                "Please fill App Secret when using a custom App ID.",
             ));
             return;
         }
 
-        match dandanapi::DanDanClient::init(appid, appsecret) {
+        let init_result = if !using_dandanplay && !has_custom_credentials {
+            init_danmaku_client_without_credentials()
+        } else if has_custom_credentials {
+            init_danmaku_client_credentials(&appid, &appsecret)
+        } else {
+            init_danmaku_client_credentials("", "")
+        };
+
+        match init_result {
             Ok(()) => {
                 self.set_key_vaild(true);
                 self.imp()
@@ -774,7 +762,7 @@ impl MPVPage {
 
     #[cfg(target_os = "linux")]
     fn dandan_client(&self) -> Result<dandanapi::DanDanClient> {
-        if !self.key_vaild() {
+        if !self.ensure_dandanapi_client() {
             return Err(anyhow::anyhow!("Danmaku client is not initialized"));
         }
 
@@ -783,6 +771,15 @@ impl MPVPage {
             .get()
             .cloned()
             .ok_or_else(|| anyhow::anyhow!("Danmaku client is not initialized"))
+    }
+
+    #[cfg(target_os = "linux")]
+    fn ensure_dandanapi_client(&self) -> bool {
+        if !self.key_vaild() {
+            self.init_dandanapi_client();
+        }
+
+        self.key_vaild()
     }
 
     #[cfg(target_os = "linux")]
@@ -1119,7 +1116,7 @@ impl MPVPage {
             return;
         }
 
-        if !self.key_vaild() {
+        if !self.ensure_dandanapi_client() {
             self.imp().danmaku_page.set_description(&gettext(
                 "Danmaku credential is invalid. Set App ID and App Secret to continue.",
             ));
@@ -1325,7 +1322,7 @@ impl MPVPage {
     #[template_callback]
     #[cfg(target_os = "linux")]
     async fn on_danmaku_search_clicked(&self) {
-        if !self.key_vaild() {
+        if !self.ensure_dandanapi_client() {
             self.imp().danmaku_page.set_description(&gettext(
                 "Danmaku credential is invalid. Set App ID and App Secret to continue.",
             ));
@@ -1565,59 +1562,15 @@ impl MPVPage {
 
     #[template_callback]
     #[cfg(target_os = "linux")]
-    fn on_danmaku_appid_changed(&self, _entry: &adw::EntryRow) {
-        self.auto_save_danmaku_credentials();
-    }
-
-    #[template_callback]
-    #[cfg(target_os = "linux")]
-    fn on_danmaku_appsecret_changed(&self, _entry: &adw::PasswordEntryRow) {
-        self.auto_save_danmaku_credentials();
-    }
-
-    #[template_callback]
-    #[cfg(target_os = "linux")]
     fn on_danmaku_server_combo_changed(&self, _pspec: glib::ParamSpec) {
         let selected = self.imp().danmaku_server_combo.selected();
-        let _ = SETTINGS.set_danmaku_active_server(danmaku_combo_to_server_index(selected));
-        self.apply_active_danmaku_server();
-    }
-
-    #[cfg(target_os = "linux")]
-    fn auto_save_danmaku_credentials(&self) {
-        let appid = self.imp().danmaku_appid_row.text().trim().to_string();
-        let appsecret = self.imp().danmaku_appsecret_row.text().trim().to_string();
-        let has_appid = !appid.is_empty();
-        let has_appsecret = !appsecret.is_empty();
-
-        if has_appid ^ has_appsecret {
-            self.set_key_vaild(false);
-            self.imp().danmaku_page.set_description(&gettext(
-                "Please fill both App ID and App Secret, or leave both empty.",
-            ));
+        let active = danmaku_combo_to_server_index(selected);
+        if SETTINGS.danmaku_active_server() == active {
             return;
         }
 
-        if SETTINGS.set_danmaku_appid(&appid).is_err()
-            || SETTINGS.set_danmaku_appsecret(&appsecret).is_err()
-        {
-            self.imp()
-                .danmaku_page
-                .set_description(&gettext("Failed to save danmaku credentials."));
-            return;
-        }
-
+        let _ = SETTINGS.set_danmaku_active_server(active);
         self.init_dandanapi_client();
-
-        if self.key_vaild() && SETTINGS.is_danmaku_enabled() {
-            spawn(glib::clone!(
-                #[weak(rename_to = obj)]
-                self,
-                async move {
-                    obj.load_danmaku().await;
-                }
-            ));
-        }
     }
 
     #[template_callback]
@@ -1633,14 +1586,6 @@ impl MPVPage {
     #[template_callback]
     #[cfg(not(target_os = "linux"))]
     async fn on_danmaku_search_clicked(&self) {}
-
-    #[template_callback]
-    #[cfg(not(target_os = "linux"))]
-    fn on_danmaku_appid_changed(&self, _entry: &adw::EntryRow) {}
-
-    #[template_callback]
-    #[cfg(not(target_os = "linux"))]
-    fn on_danmaku_appsecret_changed(&self, _entry: &adw::PasswordEntryRow) {}
 
     #[template_callback]
     #[cfg(not(target_os = "linux"))]

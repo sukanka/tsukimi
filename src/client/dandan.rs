@@ -5,6 +5,9 @@ use mutsumi::{
     DanmakuMode,
 };
 
+pub const X_APPID: &str = "e9imrhcexn";
+pub const SECRETE_KEY: &str = include_str!("../../secret/key");
+
 pub trait DanmakuConvert {
     fn into_danmaku(self) -> Danmaku;
 }
