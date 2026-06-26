@@ -624,7 +624,6 @@ mod imp {
                     #[weak]
                     obj,
                     move |_| {
-                        obj.cancel_danmaku_search();
                         obj.imp().danmaku_server_expander.set_expanded(false);
                         obj.set_can_fade_cursor_set(true);
                         obj.reset_fade_timeout();
@@ -1220,6 +1219,7 @@ impl MPVPage {
             item.name()
         };
         let video_id = item.id();
+        let search_generation = self.imp().danmaku_search_generation.get();
         let tmdb_id = self.resolve_tmdb_id(item).await;
         let search_anime = if tmdb_id.is_some() {
             String::new()
@@ -1237,7 +1237,9 @@ impl MPVPage {
 
         match self.search_danmaku_episodes(request).await {
             Ok(response) => {
-                if self.danmaku_request_is_stale(Some(&video_id)) {
+                if self.danmaku_search_is_stale(search_generation)
+                    || self.danmaku_request_is_stale(Some(&video_id))
+                {
                     return;
                 }
 
@@ -1246,15 +1248,21 @@ impl MPVPage {
                     .and_then(|animes| animes.first()?.episodes.first().map(|ep| ep.episode_id));
 
                 if let Some(episode_id) = episode_id {
-                    self.load_danmaku_episode_for_video(episode_id, Some(video_id))
-                        .await;
+                    self.load_danmaku_episode_for_video(
+                        episode_id,
+                        Some(video_id),
+                        Some(search_generation),
+                    )
+                    .await;
                 } else {
                     self.clear_danmaku_items(&gettext("No Danmaku Loaded"));
                 }
             }
             Err(e) => {
                 tracing::error!("Loading danmaku error: {e}");
-                if self.danmaku_request_is_stale(Some(&video_id)) {
+                if self.danmaku_search_is_stale(search_generation)
+                    || self.danmaku_request_is_stale(Some(&video_id))
+                {
                     return;
                 }
 
@@ -1301,14 +1309,22 @@ impl MPVPage {
 
     #[cfg(target_os = "linux")]
     async fn load_danmaku_episode(&self, episode_id: i64) {
-        self.load_danmaku_episode_for_video(episode_id, None).await;
+        let video_id = self.current_video().map(|item| item.id());
+        self.next_danmaku_search_generation();
+        self.load_danmaku_episode_for_video(episode_id, video_id, None)
+            .await;
     }
 
     #[cfg(target_os = "linux")]
-    async fn load_danmaku_episode_for_video(&self, episode_id: i64, video_id: Option<String>) {
+    async fn load_danmaku_episode_for_video(
+        &self, episode_id: i64, video_id: Option<String>, search_generation: Option<u64>,
+    ) {
         match self.request_danmaku(episode_id).await {
             Ok(danmaku) => {
-                if self.danmaku_request_is_stale(video_id.as_deref()) {
+                if search_generation
+                    .is_some_and(|generation| self.danmaku_search_is_stale(generation))
+                    || self.danmaku_request_is_stale(video_id.as_deref())
+                {
                     return;
                 }
 
@@ -1323,7 +1339,10 @@ impl MPVPage {
             }
             Err(e) => {
                 tracing::error!("Danmaku load error: {e}");
-                if self.danmaku_request_is_stale(video_id.as_deref()) {
+                if search_generation
+                    .is_some_and(|generation| self.danmaku_search_is_stale(generation))
+                    || self.danmaku_request_is_stale(video_id.as_deref())
+                {
                     return;
                 }
 
@@ -1392,6 +1411,7 @@ impl MPVPage {
                 ));
             }
         } else {
+            self.cancel_danmaku_search();
             self.imp().video.load_danmaku_items(Vec::new());
         }
 
