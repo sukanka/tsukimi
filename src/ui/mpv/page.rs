@@ -624,7 +624,6 @@ mod imp {
                     #[weak]
                     obj,
                     move |_| {
-                        obj.cancel_danmaku_search();
                         obj.imp().danmaku_server_expander.set_expanded(false);
                         obj.set_can_fade_cursor_set(true);
                         obj.reset_fade_timeout();
