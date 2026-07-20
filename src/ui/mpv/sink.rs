@@ -14,7 +14,6 @@ use mutsumi::{
     TrackKind,
     TrackSelection,
 };
-use tracing::info;
 use url::Url;
 
 use super::options_matcher::{
@@ -23,11 +22,7 @@ use super::options_matcher::{
     match_sub_border_style,
     match_video_upscale,
 };
-use crate::{
-    client::jellyfin_client::JELLYFIN_CLIENT,
-    ui::models::SETTINGS,
-    utils::spawn,
-};
+use crate::ui::models::SETTINGS;
 use adw::{
     prelude::*,
     subclass::prelude::*,
@@ -109,24 +104,34 @@ impl MPVPlaySink {
     }
 
     pub fn play(&self, url: &str, start_seconds: f64) {
-        let url = url.to_owned();
+        tracing::info!("Now Playing: {url}");
+        self.imp().position.set(start_seconds);
+        self.imp().paused.set(false);
+        self.resume_cache_fill();
 
-        spawn(glib::clone!(
-            #[weak(rename_to = obj)]
-            self,
-            async move {
-                let url = JELLYFIN_CLIENT.get_streaming_url(&url).await;
+        self.player().set_start(start_seconds);
+        self.player().push_an_empty_texture();
+        self.player().load_video(url);
+        self.player().pause(false);
+    }
 
-                info!("Now Playing: {}", url);
-                obj.imp().position.set(start_seconds);
-                obj.imp().paused.set(false);
+    pub fn resume_cached(&self, start_seconds: f64) {
+        self.imp().position.set(start_seconds);
+        self.imp().paused.set(false);
+        self.resume_cache_fill();
+        self.player().set_position(start_seconds);
+        self.player().pause(false);
+    }
 
-                obj.player().set_start(start_seconds);
-                obj.player().push_an_empty_texture();
-                obj.player().load_video(&url);
-                obj.player().pause(false);
-            }
-        ));
+    pub fn park_cached(&self) {
+        self.imp().paused.set(true);
+        self.player().pause(true);
+        self.player().set_cache_secs(0.0);
+    }
+
+    fn resume_cache_fill(&self) {
+        self.player()
+            .set_cache_secs(SETTINGS.mpv_cache_time() as f64);
     }
 
     pub fn add_sub(&self, url: &str) {
