@@ -9,6 +9,7 @@ use gtk::{
 };
 mod imp {
     use std::cell::{
+        Cell,
         OnceCell,
         RefCell,
     };
@@ -111,6 +112,10 @@ mod imp {
 
         #[template_child]
         pub avatar: TemplateChild<adw::Avatar>,
+        #[template_child]
+        pub route_switch_button: TemplateChild<gtk::MenuButton>,
+
+        pub route_switching: Cell<bool>,
 
         pub progress_bar_animation: OnceCell<adw::TimedAnimation>,
         pub progress_bar_fade_animation: OnceCell<adw::TimedAnimation>,
@@ -171,6 +176,14 @@ mod imp {
             klass.install_action("win.add-server", None, |obj, _, _| {
                 obj.new_account();
             });
+            klass.install_action(
+                "win.switch-route",
+                Some(&i32::static_variant_type()),
+                |obj, _, parameter| {
+                    let index = parameter.and_then(|value| value.get::<i32>()).unwrap_or(-1);
+                    obj.switch_route(index);
+                },
+            );
         }
 
         fn instance_init(obj: &InitializingObject<Self>) {
@@ -514,6 +527,73 @@ impl Window {
         let s = JELLYFIN_CLIENT.session();
         imp.namerow.set_title(&s.account.username);
         imp.namerow.set_subtitle(&s.account.servername);
+        self.update_route_switcher();
+    }
+
+    fn current_account(&self) -> Option<Account> {
+        super::route_switcher::current_account()
+    }
+
+    pub fn update_route_switcher(&self) {
+        super::route_switcher::refresh_route_switch_button(
+            &self.imp().route_switch_button,
+            self.current_account().as_ref(),
+        );
+    }
+
+    fn set_route_switching(&self, switching: bool) {
+        self.imp().route_switching.set(switching);
+        self.imp().route_switch_button.set_sensitive(!switching);
+    }
+
+    pub fn switch_route(&self, index: i32) {
+        if self.imp().route_switching.get() {
+            return;
+        }
+
+        let Some(old_account) = self.current_account() else {
+            return;
+        };
+        let active_route = if index < 0 {
+            None
+        } else {
+            let index = index as usize;
+            if index >= old_account.routes.len() {
+                return;
+            }
+            Some(index)
+        };
+        if old_account.active_route == active_route {
+            return;
+        }
+
+        let mut new_account = old_account.clone();
+        new_account.active_route = active_route;
+        self.set_route_switching(true);
+
+        spawn(glib::clone!(
+            #[weak(rename_to = obj)]
+            self,
+            async move {
+                if let Err(error) = JELLYFIN_CLIENT.init(&new_account).await {
+                    obj.toast(format!("{}: {error}", gettext("Failed to switch route")));
+                    obj.set_route_switching(false);
+                    return;
+                }
+
+                if let Err(error) = SETTINGS.edit_account(old_account.clone(), new_account.clone())
+                {
+                    let _ = JELLYFIN_CLIENT.init(&old_account).await;
+                    obj.toast(format!("{}: {error}", gettext("Failed to save account")));
+                    obj.set_route_switching(false);
+                    return;
+                }
+
+                obj.set_route_switching(false);
+                obj.update_route_switcher();
+                obj.reset();
+            }
+        ));
     }
 
     pub fn account_settings(&self) {
