@@ -54,10 +54,7 @@ use adw::{
     prelude::*,
     subclass::prelude::*,
 };
-use chrono::{
-    DateTime,
-    Utc,
-};
+use chrono::Utc;
 use gettextrs::gettext;
 use glib::Object;
 use gtk::{
@@ -469,7 +466,8 @@ impl ItemPage {
         play_button.set_sensitive(true);
         spinner.set_visible(false);
 
-        self.createmediabox(playback.media_sources, None).await;
+        self.createmediabox(playback.media_sources, intro.date_created())
+            .await;
     }
 
     #[template_callback]
@@ -1057,7 +1055,7 @@ impl ItemPage {
     }
 
     pub async fn createmediabox(
-        &self, media_sources: Vec<MediaSource>, date_created: Option<DateTime<Utc>>,
+        &self, media_sources: Vec<MediaSource>, date_created: Option<glib::DateTime>,
     ) {
         let imp = self.imp();
         let mediainfobox = imp.mediainfobox.get();
@@ -1069,12 +1067,17 @@ impl ItemPage {
 
         for mediasource in media_sources {
             let singlebox = gtk::Box::new(gtk::Orientation::Vertical, 5);
+            let date_created = date_created
+                .as_ref()
+                .and_then(|date| date.format("%Y-%m-%d %H:%M:%S").ok())
+                .map(|date| format!("\n{date}"))
+                .unwrap_or_default();
             let info = format!(
-                "{}\n{} {} {}\n{}",
+                "{}\n{} {}{}\n{}",
                 mediasource.path.unwrap_or_default(),
                 mediasource.container.unwrap_or_default().to_uppercase(),
                 bytefmt::format(mediasource.size.unwrap_or_default()),
-                dt(date_created),
+                date_created,
                 mediasource.name
             );
             let label = gtk::Label::builder()
