@@ -1,4 +1,7 @@
-use std::cell::Cell;
+use std::cell::{
+    Cell,
+    RefCell,
+};
 
 use glib::Object;
 use gtk::{
@@ -9,6 +12,9 @@ use gtk::{
 };
 use mutsumi::{
     ContextedMPV,
+    Danmaku,
+    DanmakuTrack,
+    Danmakw,
     MpvValue,
     MutsumiVideoPlayer,
     TrackKind,
@@ -22,7 +28,10 @@ use super::options_matcher::{
     match_sub_border_style,
     match_video_upscale,
 };
-use crate::ui::models::SETTINGS;
+use crate::{
+    ui::models::SETTINGS,
+    utils::spawn,
+};
 use adw::{
     prelude::*,
     subclass::prelude::*,
@@ -35,16 +44,30 @@ mod imp {
 
     pub struct MPVPlaySink {
         pub player: MutsumiVideoPlayer,
+        pub danmaku: Danmakw,
         pub position: Cell<f64>,
         pub paused: Cell<bool>,
+        pub video_loaded: Cell<bool>,
+        pub buffering: Cell<bool>,
+        pub danmaku_loaded: Cell<bool>,
+        pub danmaku_running: Cell<bool>,
+        pub danmaku_source: RefCell<Option<String>>,
+        pub danmaku_generation: Cell<u64>,
     }
 
     impl Default for MPVPlaySink {
         fn default() -> Self {
             Self {
                 player: MutsumiVideoPlayer::new(),
+                danmaku: Danmakw::new(),
                 position: Cell::new(0.0),
                 paused: Cell::new(true),
+                video_loaded: Cell::new(false),
+                buffering: Cell::new(false),
+                danmaku_loaded: Cell::new(false),
+                danmaku_running: Cell::new(false),
+                danmaku_source: RefCell::new(None),
+                danmaku_generation: Cell::new(0),
             }
         }
     }
@@ -63,13 +86,40 @@ mod imp {
             let obj = self.obj();
             self.player.set_hexpand(true);
             self.player.set_vexpand(true);
-            obj.set_child(Some(&self.player));
+
+            let overlay = gtk::Overlay::new();
+            overlay.set_hexpand(true);
+            overlay.set_vexpand(true);
+            overlay.set_child(Some(&self.player));
+
+            self.danmaku.set_hexpand(true);
+            self.danmaku.set_vexpand(true);
+            self.danmaku.set_can_target(false);
+            self.danmaku.set_opacity(SETTINGS.danmaku_opacity());
+            self.danmaku.set_visible(SETTINGS.is_danmaku_enabled());
+            overlay.add_overlay(&self.danmaku);
+            obj.set_child(Some(&overlay));
+
+            SETTINGS
+                .bind("is-danmaku-enabled", &self.danmaku, "visible")
+                .build();
+            SETTINGS
+                .bind("danmaku-opacity", &self.danmaku, "opacity")
+                .build();
+            SETTINGS.connect_changed(
+                Some("is-danmaku-enabled"),
+                glib::clone!(
+                    #[weak]
+                    obj,
+                    move |_, _| obj.sync_danmaku_playback()
+                ),
+            );
 
             super::configure_mpv(&self.player);
         }
 
         fn dispose(&self) {
-            self.player.unparent();
+            self.obj().set_child(None::<&gtk::Widget>);
         }
     }
 
@@ -107,6 +157,8 @@ impl MPVPlaySink {
         tracing::info!("Now Playing: {url}");
         self.imp().position.set(start_seconds);
         self.imp().paused.set(false);
+        self.imp().video_loaded.set(false);
+        self.clear_danmaku();
         self.resume_cache_fill();
 
         self.player().set_start(start_seconds);
@@ -119,14 +171,17 @@ impl MPVPlaySink {
         self.imp().position.set(start_seconds);
         self.imp().paused.set(false);
         self.resume_cache_fill();
+        self.preroll_danmaku(start_seconds * 1000.0);
         self.player().set_position(start_seconds);
         self.player().pause(false);
+        self.sync_danmaku_playback();
     }
 
     pub fn park_cached(&self) {
         self.imp().paused.set(true);
         self.player().pause(true);
         self.player().set_cache_secs(0.0);
+        self.sync_danmaku_playback();
     }
 
     fn resume_cache_fill(&self) {
@@ -148,6 +203,7 @@ impl MPVPlaySink {
 
     pub fn set_position(&self, value: f64) {
         self.imp().position.set(value);
+        self.preroll_danmaku(value * 1000.0);
         self.player().set_position(value)
     }
 
@@ -157,6 +213,9 @@ impl MPVPlaySink {
 
     pub fn update_position(&self, value: f64) {
         self.imp().position.set(value);
+        if self.imp().danmaku_loaded.get() && !self.imp().danmaku_running.get() {
+            self.imp().danmaku.update(value * 1000.0);
+        }
     }
 
     pub fn set_aid(&self, value: TrackSelection) {
@@ -180,6 +239,7 @@ impl MPVPlaySink {
     }
 
     pub fn set_speed(&self, value: f64) {
+        self.imp().danmaku.set_speed_factor(value);
         self.player().set_speed(value)
     }
 
@@ -197,9 +257,11 @@ impl MPVPlaySink {
 
     pub fn update_paused(&self, value: bool) {
         self.imp().paused.set(value);
+        self.sync_danmaku_playback();
     }
 
     pub fn pause(&self) {
+        self.update_paused(!self.paused());
         self.player().command_pause();
     }
 
@@ -213,7 +275,115 @@ impl MPVPlaySink {
 
     pub fn stop(&self) {
         self.imp().paused.set(true);
+        self.imp().video_loaded.set(false);
+        self.clear_danmaku();
         self.player().stop();
+    }
+
+    pub fn mark_loaded(&self) {
+        self.imp().video_loaded.set(true);
+        self.sync_danmaku_playback();
+    }
+
+    pub fn set_buffering(&self, buffering: bool) {
+        self.imp().buffering.set(buffering);
+        self.sync_danmaku_playback();
+    }
+
+    pub fn seek_danmaku(&self, position_millis: f64) {
+        self.imp().position.set(position_millis / 1000.0);
+        self.preroll_danmaku(position_millis);
+    }
+
+    pub fn load_danmaku_track(&self, track: Option<DanmakuTrack>) {
+        let source = track.map(|track| track.external_url);
+        if self.imp().danmaku_source.borrow().as_ref() == source.as_ref() {
+            return;
+        }
+
+        let generation = self.next_danmaku_generation();
+        self.imp().danmaku_source.replace(source.clone());
+        self.reset_danmaku_renderer();
+
+        let Some(source) = source else {
+            return;
+        };
+        spawn(glib::clone!(
+            #[weak(rename_to = obj)]
+            self,
+            async move {
+                let result = fetch_url_content(&source).await.and_then(|content| {
+                    mutsumi::parse_bilibili_xml(&content)
+                        .map_err(Box::<dyn std::error::Error>::from)
+                });
+                if obj.imp().danmaku_generation.get() != generation {
+                    return;
+                }
+
+                match result {
+                    Ok(items) => {
+                        let count = items.len();
+                        obj.load_danmaku_items(items);
+                        tracing::info!(
+                            "Loaded external danmaku track from {source} ({count} items)"
+                        );
+                    }
+                    Err(error) => {
+                        tracing::warn!(
+                            "Failed to load external danmaku track from {source}: {error}"
+                        );
+                    }
+                }
+            }
+        ));
+    }
+
+    pub fn load_danmaku_items(&self, items: Vec<Danmaku>) {
+        let loaded = !items.is_empty();
+        self.imp().danmaku.load_danmaku(items);
+        self.imp().danmaku_loaded.set(loaded);
+        self.preroll_danmaku(self.position() * 1000.0);
+        self.sync_danmaku_playback();
+    }
+
+    pub fn clear_danmaku(&self) {
+        self.next_danmaku_generation();
+        self.imp().danmaku_source.take();
+        self.reset_danmaku_renderer();
+    }
+
+    fn next_danmaku_generation(&self) -> u64 {
+        let generation = self.imp().danmaku_generation.get().wrapping_add(1);
+        self.imp().danmaku_generation.set(generation);
+        generation
+    }
+
+    fn reset_danmaku_renderer(&self) {
+        self.imp().danmaku_loaded.set(false);
+        self.imp().danmaku_running.set(false);
+        self.imp().danmaku.set_paused(true);
+        self.imp().danmaku.load_danmaku(Vec::new());
+    }
+
+    fn preroll_danmaku(&self, position_millis: f64) {
+        if self.imp().danmaku_loaded.get() {
+            self.imp().danmaku.preroll_seek(position_millis);
+        }
+    }
+
+    fn sync_danmaku_playback(&self) {
+        let imp = self.imp();
+        let should_run = SETTINGS.is_danmaku_enabled()
+            && imp.video_loaded.get()
+            && imp.danmaku_loaded.get()
+            && !imp.paused.get()
+            && !imp.buffering.get();
+        if should_run == imp.danmaku_running.get() {
+            return;
+        }
+
+        imp.danmaku.set_paused(!should_run);
+        imp.danmaku_running.set(should_run);
     }
 
     pub fn set_property<V>(&self, property: &str, value: V)
@@ -222,6 +392,12 @@ impl MPVPlaySink {
     {
         self.player().set_property(property, value)
     }
+}
+
+async fn fetch_url_content(url: &str) -> Result<String, Box<dyn std::error::Error>> {
+    let file = gio::File::for_uri(url);
+    let (bytes, _) = file.load_contents_future().await?;
+    Ok(String::from_utf8(bytes.to_vec())?)
 }
 
 fn configure_mpv(player: &MutsumiVideoPlayer) {
