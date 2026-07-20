@@ -370,6 +370,18 @@
                                   </object>
                                 </child>
                                 <child>
+                                  <object class="GtkMenuButton" id="danmaku_button">
+                                    <property name="popover">danmaku_popover</property>
+                                    <property name="icon-name">card-bulleted-symbolic</property>
+                                    <property name="tooltip-text" translatable="yes">Danmaku Options</property>
+                                    <property name="valign">center</property>
+                                    <style>
+                                      <class name="flat" />
+                                      <class name="circular" />
+                                    </style>
+                                  </object>
+                                </child>
+                                <child>
                                     <object class="GtkMenuButton" id="volume_button">
                                         <property name="popover">volume_adj_popover</property>
                                         <property name="icon-name">audio-volume-high-symbolic</property>
@@ -567,6 +579,38 @@
         <class name="accent" />
       </style>
     </object>
+    </child>
+  </object>
+
+  <object class="GtkPopover" id="danmaku_popover">
+    <property name="height-request">120</property>
+    <property name="width-request">260</property>
+    <property name="position">top</property>
+    <property name="has-arrow">true</property>
+    <signal name="map" handler="on_popover_opened" swapped="yes" />
+    <signal name="unmap" handler="on_popover_closed" swapped="yes" />
+    <child>
+      <object class="GtkListBox">
+        <property name="selection-mode">none</property>
+        <property name="margin-top">12</property>
+        <property name="margin-bottom">12</property>
+        <property name="margin-start">12</property>
+        <property name="margin-end">12</property>
+        <style>
+          <class name="boxed-list-separate" />
+        </style>
+        <child>
+          <object class="AdwActionRow">
+            <property name="title" translatable="yes">Enable Danmaku</property>
+            <property name="activatable-widget">danmaku_switch</property>
+            <child>
+              <object class="GtkSwitch" id="danmaku_switch">
+                <property name="valign">center</property>
+              </object>
+            </child>
+          </object>
+        </child>
+      </object>
     </child>
   </object>
 

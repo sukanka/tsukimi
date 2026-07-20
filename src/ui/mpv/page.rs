@@ -227,6 +227,10 @@ mod imp {
         #[template_child]
         pub subtitle_tracks_menu_button: TemplateChild<gtk::MenuButton>,
         #[template_child]
+        pub danmaku_button: TemplateChild<gtk::MenuButton>,
+        #[template_child]
+        pub danmaku_switch: TemplateChild<gtk::Switch>,
+        #[template_child]
         pub title_label1: TemplateChild<gtk::Label>,
         #[template_child]
         pub title_label2: TemplateChild<gtk::Label>,
@@ -364,6 +368,10 @@ mod imp {
 
             SETTINGS
                 .bind("mpv-default-volume", &self.volume_adj.get(), "value")
+                .build();
+
+            SETTINGS
+                .bind("is-danmaku-enabled", &self.danmaku_switch.get(), "active")
                 .build();
 
             self.video_scale.set_player(Some(&self.video.get()));
@@ -903,6 +911,7 @@ impl MPVPage {
 
     async fn set_audio_and_video_tracks_dropdown(&self, value: MpvTracks) {
         let imp = self.imp();
+        imp.video.load_danmaku_track(value.danmaku_track);
         self.bind_tracks(
             value.audio_tracks,
             &imp.audio_listbox.get(),
@@ -1043,10 +1052,26 @@ impl MPVPage {
                         ListenEvent::Duration(value) => {
                             obj.update_duration(value);
                         }
-                        ListenEvent::PausedForCache(true, _) | ListenEvent::Seek(_) => {
+                        ListenEvent::PausedForCache(true, _) => {
+                            obj.imp().video.set_buffering(true);
                             obj.update_seeking(true);
                         }
-                        ListenEvent::PausedForCache(false, _) | ListenEvent::PlaybackRestart(_) => {
+                        ListenEvent::Seek(position) => {
+                            obj.imp().video.seek_danmaku(position);
+                            obj.update_seeking(true);
+                        }
+                        ListenEvent::PausedForCache(false, _) => {
+                            obj.imp().video.set_buffering(false);
+                            let was_seeking = obj.get_seeking();
+                            obj.update_seeking(false);
+                            if was_seeking {
+                                obj.handle_callback(BackType::Back);
+                                obj.notify_seeked(obj.imp().video.position() as i64);
+                            }
+                        }
+                        ListenEvent::PlaybackRestart(position) => {
+                            obj.imp().video.set_buffering(false);
+                            obj.imp().video.seek_danmaku(position);
                             let was_seeking = obj.get_seeking();
                             obj.update_seeking(false);
                             if was_seeking {
@@ -1205,6 +1230,7 @@ impl MPVPage {
         };
         imp.cached_playback.replace(Some(cache_key));
         imp.allow_fallback.set(false);
+        imp.video.mark_loaded();
         if let Some(suburl) = imp.suburl.borrow().as_ref() {
             imp.video.add_sub(suburl);
         }
