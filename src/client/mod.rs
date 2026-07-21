@@ -28,6 +28,25 @@ pub struct DanmakuServer {
     pub url: String,
 }
 
+impl DanmakuServer {
+    pub fn try_new(name: &str, url: &str) -> Result<Self, String> {
+        let name = name.trim();
+        if name.is_empty() {
+            return Err("Server name cannot be empty.".to_string());
+        }
+
+        let parsed = url::Url::parse(url.trim()).map_err(|_| "Invalid server URL.".to_string())?;
+        if !matches!(parsed.scheme(), "http" | "https") || parsed.host_str().is_none() {
+            return Err("Server URL must use HTTP or HTTPS.".to_string());
+        }
+
+        Ok(Self {
+            name: name.to_string(),
+            url: parsed.to_string().trim_end_matches('/').to_string(),
+        })
+    }
+}
+
 pub fn danmaku_combo_to_server_index(selected: u32) -> i32 {
     selected as i32 - 1
 }
@@ -137,5 +156,15 @@ mod tests {
         assert!(is_default_danmaku_credentials(default_danmaku_appid(), ""));
         assert!(has_complete_danmaku_credentials("app", "secret"));
         assert!(!has_complete_danmaku_credentials("app", ""));
+    }
+
+    #[test]
+    fn validates_and_normalizes_danmaku_servers() {
+        let server =
+            DanmakuServer::try_new(" Local ", "https://example.com/api/").expect("valid server");
+        assert_eq!(server.name, "Local");
+        assert_eq!(server.url, "https://example.com/api");
+        assert!(DanmakuServer::try_new("", "https://example.com").is_err());
+        assert!(DanmakuServer::try_new("Local", "file:///tmp/api").is_err());
     }
 }
