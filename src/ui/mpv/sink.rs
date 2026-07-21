@@ -366,6 +366,10 @@ impl MPVPlaySink {
         self.apply_danmaku_items(items);
     }
 
+    pub fn has_external_danmaku_source(&self) -> bool {
+        self.imp().danmaku_source.borrow().is_some()
+    }
+
     fn apply_danmaku_items(&self, items: Vec<Danmaku>) {
         let loaded = !items.is_empty();
         self.imp().danmaku.load_danmaku(items);
