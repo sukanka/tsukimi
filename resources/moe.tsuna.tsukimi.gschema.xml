@@ -262,6 +262,34 @@
       <summary>Danmaku opacity</summary>
       <default>1.0</default>
     </key>
+    <key type="d" name="danmaku-speed">
+      <summary>Danmaku speed</summary>
+      <default>1.0</default>
+    </key>
+    <key type="d" name="danmaku-font-size">
+      <summary>Danmaku font size</summary>
+      <default>24.0</default>
+    </key>
+    <key type="d" name="danmaku-font-weight">
+      <summary>Danmaku font weight</summary>
+      <default>5.0</default>
+    </key>
+    <key type="d" name="danmaku-intensity">
+      <summary>Danmaku display area</summary>
+      <default>1.0</default>
+    </key>
+    <key type="d" name="danmaku-spacing-factor">
+      <summary>Danmaku line spacing factor</summary>
+      <default>1.5</default>
+    </key>
+    <key type="d" name="danmaku-outline-px">
+      <summary>Danmaku outline width</summary>
+      <default>1.0</default>
+    </key>
+    <key type="d" name="danmaku-shadow-offset">
+      <summary>Danmaku shadow offset</summary>
+      <default>1.0</default>
+    </key>
     <key name="is-refresh" type="b">
       <summary>Frefresh when returning to home page</summary>
       <default>false</default>
@@ -277,6 +305,24 @@
     <key name="is-danmaku-enabled" type="b">
       <summary>Whether the danmaku is enabled</summary>
       <default>false</default>
+    </key>
+    <key name="danmaku-appid" type="s">
+      <summary>Danmaku custom app id</summary>
+      <default>''</default>
+    </key>
+    <key name="danmaku-appsecret" type="s">
+      <summary>Danmaku custom app secret</summary>
+      <default>''</default>
+    </key>
+    <key name="danmaku-servers" type="s">
+      <summary>Danmaku custom server list</summary>
+      <description>JSON array of dandanplay API-compatible server definitions</description>
+      <default>'[]'</default>
+    </key>
+    <key name="danmaku-active-server" type="i">
+      <summary>Active danmaku server index</summary>
+      <description>-1 selects dandanplay; non-negative values select a custom server</description>
+      <default>-1</default>
     </key>
   </schema>
 </schemalist>

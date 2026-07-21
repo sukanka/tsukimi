@@ -11,7 +11,10 @@ use gtk::{
 
 use crate::{
     APP_ID,
-    client::Account,
+    client::{
+        Account,
+        DanmakuServer,
+    },
     ui::provider::descriptor::{
         Descriptor,
         VecSerialize,
@@ -77,7 +80,18 @@ impl Settings {
     const KEY_IS_MAXIMIZED: &'static str = "is-maximized"; // bool
     const KEY_IS_FULLSCREEN: &'static str = "is-fullscreen"; // bool
     const KEY_DANMAKU_OPACITY: &'static str = "danmaku-opacity"; // f64
+    const KEY_DANMAKU_SPEED: &'static str = "danmaku-speed"; // f64
+    const KEY_DANMAKU_FONT_SIZE: &'static str = "danmaku-font-size"; // f64
+    const KEY_DANMAKU_FONT_WEIGHT: &'static str = "danmaku-font-weight"; // f64
+    const KEY_DANMAKU_INTENSITY: &'static str = "danmaku-intensity"; // f64
+    const KEY_DANMAKU_SPACING_FACTOR: &'static str = "danmaku-spacing-factor"; // f64
+    const KEY_DANMAKU_OUTLINE_PX: &'static str = "danmaku-outline-px"; // f64
+    const KEY_DANMAKU_SHADOW_OFFSET: &'static str = "danmaku-shadow-offset"; // f64
     const KEY_IS_DANMAKU_ENABLED: &'static str = "is-danmaku-enabled"; // bool
+    const KEY_DANMAKU_APPID: &'static str = "danmaku-appid"; // String
+    const KEY_DANMAKU_APPSECRET: &'static str = "danmaku-appsecret"; // String
+    const KEY_DANMAKU_SERVERS: &'static str = "danmaku-servers"; // String
+    const KEY_DANMAKU_ACTIVE_SERVER: &'static str = "danmaku-active-server"; // i32
 
     pub fn is_overlay(&self) -> bool {
         self.boolean(Self::KEY_IS_OVERLAY)
@@ -252,8 +266,71 @@ impl Settings {
         self.double(Self::KEY_DANMAKU_OPACITY)
     }
 
+    pub fn danmaku_speed(&self) -> f64 {
+        self.double(Self::KEY_DANMAKU_SPEED)
+    }
+
+    pub fn danmaku_font_size(&self) -> f64 {
+        self.double(Self::KEY_DANMAKU_FONT_SIZE)
+    }
+
+    pub fn danmaku_font_weight(&self) -> f64 {
+        self.double(Self::KEY_DANMAKU_FONT_WEIGHT)
+    }
+
+    pub fn danmaku_intensity(&self) -> f64 {
+        self.double(Self::KEY_DANMAKU_INTENSITY)
+    }
+
+    pub fn danmaku_spacing_factor(&self) -> f64 {
+        self.double(Self::KEY_DANMAKU_SPACING_FACTOR)
+    }
+
+    pub fn danmaku_outline_px(&self) -> f64 {
+        self.double(Self::KEY_DANMAKU_OUTLINE_PX)
+    }
+
+    pub fn danmaku_shadow_offset(&self) -> f64 {
+        self.double(Self::KEY_DANMAKU_SHADOW_OFFSET)
+    }
+
     pub fn is_danmaku_enabled(&self) -> bool {
         self.boolean(Self::KEY_IS_DANMAKU_ENABLED)
+    }
+
+    pub fn danmaku_appid(&self) -> String {
+        self.string(Self::KEY_DANMAKU_APPID).to_string()
+    }
+
+    pub fn set_danmaku_appid(&self, appid: &str) -> Result<(), glib::BoolError> {
+        self.set_string(Self::KEY_DANMAKU_APPID, appid)
+    }
+
+    pub fn danmaku_appsecret(&self) -> String {
+        self.string(Self::KEY_DANMAKU_APPSECRET).to_string()
+    }
+
+    pub fn set_danmaku_appsecret(&self, appsecret: &str) -> Result<(), glib::BoolError> {
+        self.set_string(Self::KEY_DANMAKU_APPSECRET, appsecret)
+    }
+
+    pub fn danmaku_servers(&self) -> Vec<DanmakuServer> {
+        serde_json::from_str(self.string(Self::KEY_DANMAKU_SERVERS).as_ref()).unwrap_or_default()
+    }
+
+    pub fn set_danmaku_servers(&self, servers: &[DanmakuServer]) -> Result<(), glib::BoolError> {
+        self.set_string(
+            Self::KEY_DANMAKU_SERVERS,
+            &serde_json::to_string(servers).unwrap_or_default(),
+        )
+    }
+
+    pub fn danmaku_active_server(&self) -> i32 {
+        self.int(Self::KEY_DANMAKU_ACTIVE_SERVER)
+    }
+
+    pub fn set_danmaku_active_server(&self, index: i32) -> Result<(), glib::BoolError> {
+        self.set_int(Self::KEY_DANMAKU_ACTIVE_SERVER, index)
     }
 
     pub fn mpv_audio_channel(&self) -> i32 {

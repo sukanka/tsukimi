@@ -53,6 +53,7 @@ mod imp {
         pub danmaku_running: Cell<bool>,
         pub danmaku_source: RefCell<Option<String>>,
         pub danmaku_generation: Cell<u64>,
+        pub playback_speed: Cell<f64>,
     }
 
     impl Default for MPVPlaySink {
@@ -68,6 +69,7 @@ mod imp {
                 danmaku_running: Cell::new(false),
                 danmaku_source: RefCell::new(None),
                 danmaku_generation: Cell::new(0),
+                playback_speed: Cell::new(1.0),
             }
         }
     }
@@ -106,6 +108,25 @@ mod imp {
             SETTINGS
                 .bind("danmaku-opacity", &self.danmaku, "opacity")
                 .build();
+            obj.apply_danmaku_appearance();
+            for key in [
+                "danmaku-speed",
+                "danmaku-font-size",
+                "danmaku-font-weight",
+                "danmaku-intensity",
+                "danmaku-spacing-factor",
+                "danmaku-outline-px",
+                "danmaku-shadow-offset",
+            ] {
+                SETTINGS.connect_changed(
+                    Some(key),
+                    glib::clone!(
+                        #[weak]
+                        obj,
+                        move |_, _| obj.apply_danmaku_appearance()
+                    ),
+                );
+            }
             SETTINGS.connect_changed(
                 Some("is-danmaku-enabled"),
                 glib::clone!(
@@ -239,7 +260,8 @@ impl MPVPlaySink {
     }
 
     pub fn set_speed(&self, value: f64) {
-        self.imp().danmaku.set_speed_factor(value);
+        self.imp().playback_speed.set(value);
+        self.apply_danmaku_speed();
         self.player().set_speed(value)
     }
 
@@ -323,7 +345,7 @@ impl MPVPlaySink {
                 match result {
                     Ok(items) => {
                         let count = items.len();
-                        obj.load_danmaku_items(items);
+                        obj.apply_danmaku_items(items);
                         tracing::info!(
                             "Loaded external danmaku track from {source} ({count} items)"
                         );
@@ -339,11 +361,35 @@ impl MPVPlaySink {
     }
 
     pub fn load_danmaku_items(&self, items: Vec<Danmaku>) {
+        self.next_danmaku_generation();
+        self.imp().danmaku_source.take();
+        self.apply_danmaku_items(items);
+    }
+
+    fn apply_danmaku_items(&self, items: Vec<Danmaku>) {
         let loaded = !items.is_empty();
         self.imp().danmaku.load_danmaku(items);
         self.imp().danmaku_loaded.set(loaded);
         self.preroll_danmaku(self.position() * 1000.0);
         self.sync_danmaku_playback();
+    }
+
+    fn apply_danmaku_appearance(&self) {
+        let danmaku = &self.imp().danmaku;
+        self.apply_danmaku_speed();
+        danmaku.set_font_size(SETTINGS.danmaku_font_size());
+        danmaku.set_font_weight(SETTINGS.danmaku_font_weight().round() as u32);
+        danmaku.set_intensity(SETTINGS.danmaku_intensity().round().clamp(0.0, 3.0) as u32);
+        danmaku.set_spacing_factor(SETTINGS.danmaku_spacing_factor());
+        danmaku.set_outline_px(SETTINGS.danmaku_outline_px());
+        danmaku.set_shadow_offset(SETTINGS.danmaku_shadow_offset());
+        self.preroll_danmaku(self.position() * 1000.0);
+    }
+
+    fn apply_danmaku_speed(&self) {
+        self.imp()
+            .danmaku
+            .set_speed_factor(SETTINGS.danmaku_speed() * self.imp().playback_speed.get());
     }
 
     pub fn clear_danmaku(&self) {
