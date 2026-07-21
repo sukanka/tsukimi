@@ -117,6 +117,12 @@ use crate::client::{
 const MIN_MOTION_TIME: i64 = 100000;
 const PREV_CHAPTER_KEYVAL: u32 = 65366;
 const NEXT_CHAPTER_KEYVAL: u32 = 65365;
+#[cfg(target_os = "linux")]
+const DANMAKU_CONTEXT_HISTORY_LIMIT: usize = 80;
+#[cfg(target_os = "linux")]
+const DANMAKU_AUTO_NAME_LIMIT: usize = 3;
+#[cfg(target_os = "linux")]
+const DANMAKU_MANUAL_NAME_LIMIT: usize = 2;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct PlaybackDirectMode {
@@ -211,6 +217,9 @@ mod imp {
         Cell,
         RefCell,
     };
+
+    #[cfg(target_os = "linux")]
+    use std::collections::HashMap;
 
     use adw::prelude::*;
     use gettextrs::gettext;
@@ -366,6 +375,18 @@ mod imp {
         pub danmaku_search_generation: Cell<u64>,
         #[cfg(target_os = "linux")]
         pub danmaku_server_rows: RefCell<Vec<CheckRow>>,
+        #[cfg(target_os = "linux")]
+        pub danmaku_anime_candidate_button: RefCell<Option<gtk::MenuButton>>,
+        #[cfg(target_os = "linux")]
+        pub danmaku_anime_candidate_popover: RefCell<Option<gtk::Popover>>,
+        #[cfg(target_os = "linux")]
+        pub danmaku_anime_candidate_list: RefCell<Option<gtk::ListBox>>,
+        #[cfg(target_os = "linux")]
+        pub danmaku_auto_names: RefCell<HashMap<String, Vec<String>>>,
+        #[cfg(target_os = "linux")]
+        pub danmaku_manual_names: RefCell<HashMap<String, Vec<String>>>,
+        #[cfg(target_os = "linux")]
+        pub danmaku_context_history: RefCell<Vec<String>>,
     }
 
     #[glib::object_subclass]
@@ -460,6 +481,7 @@ mod imp {
 
             #[cfg(target_os = "linux")]
             {
+                obj.setup_danmaku_anime_candidate_picker();
                 obj.rebuild_danmaku_server_list();
                 SETTINGS.connect_changed(
                     Some("danmaku-servers"),
@@ -648,12 +670,165 @@ impl MPVPage {
     }
 
     #[cfg(target_os = "linux")]
+    fn setup_danmaku_anime_candidate_picker(&self) {
+        let imp = self.imp();
+        let list = gtk::ListBox::builder()
+            .selection_mode(gtk::SelectionMode::None)
+            .margin_top(6)
+            .margin_bottom(6)
+            .margin_start(6)
+            .margin_end(6)
+            .build();
+        list.add_css_class("boxed-list");
+
+        let popover = gtk::Popover::new();
+        popover.set_child(Some(&list));
+        let button = gtk::MenuButton::builder()
+            .icon_name("pan-down-symbolic")
+            .tooltip_text(gettext("Show anime name candidates"))
+            .valign(gtk::Align::Center)
+            .visible(false)
+            .build();
+        button.add_css_class("flat");
+        button.set_popover(Some(&popover));
+        imp.danmaku_anime_row.add_suffix(&button);
+        imp.danmaku_anime_candidate_button.replace(Some(button));
+        imp.danmaku_anime_candidate_popover.replace(Some(popover));
+        imp.danmaku_anime_candidate_list.replace(Some(list));
+    }
+
+    #[cfg(target_os = "linux")]
+    fn push_unique_danmaku_name(names: &mut Vec<String>, value: &str) {
+        let value = value.trim();
+        if !value.is_empty() && !names.iter().any(|name| name == value) {
+            names.push(value.to_string());
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    fn danmaku_context_key(item: &TuItem) -> String {
+        item.series_id().unwrap_or_else(|| item.id())
+    }
+
+    #[cfg(target_os = "linux")]
+    fn touch_danmaku_context(&self, key: &str) {
+        let imp = self.imp();
+        let mut history = imp.danmaku_context_history.borrow_mut();
+        history.retain(|stored| stored != key);
+        history.insert(0, key.to_string());
+        while history.len() > DANMAKU_CONTEXT_HISTORY_LIMIT {
+            if let Some(expired) = history.pop() {
+                imp.danmaku_auto_names.borrow_mut().remove(&expired);
+                imp.danmaku_manual_names.borrow_mut().remove(&expired);
+            }
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    fn danmaku_names_for_context(&self, key: &str) -> Vec<String> {
+        let imp = self.imp();
+        let mut names = Vec::new();
+        for source in [&imp.danmaku_auto_names, &imp.danmaku_manual_names] {
+            if let Some(stored) = source.borrow().get(key) {
+                for name in stored {
+                    Self::push_unique_danmaku_name(&mut names, name);
+                }
+            }
+        }
+        names
+    }
+
+    #[cfg(target_os = "linux")]
+    fn remember_danmaku_names(
+        &self, key: &str, names: impl IntoIterator<Item = String>, manual: bool,
+    ) -> Vec<String> {
+        let imp = self.imp();
+        let (storage, limit) = if manual {
+            (&imp.danmaku_manual_names, DANMAKU_MANUAL_NAME_LIMIT)
+        } else {
+            (&imp.danmaku_auto_names, DANMAKU_AUTO_NAME_LIMIT)
+        };
+        let mut storage = storage.borrow_mut();
+        let stored = storage.entry(key.to_string()).or_default();
+        for name in names {
+            let name = name.trim();
+            if manual {
+                stored.retain(|candidate| candidate != name);
+                if !name.is_empty() {
+                    stored.insert(0, name.to_string());
+                }
+            } else {
+                Self::push_unique_danmaku_name(stored, name);
+            }
+        }
+        stored.truncate(limit);
+        drop(storage);
+        self.touch_danmaku_context(key);
+        self.danmaku_names_for_context(key)
+    }
+
+    #[cfg(target_os = "linux")]
+    fn rebuild_danmaku_anime_candidate_picker(&self, names: &[String]) {
+        let imp = self.imp();
+        if let Some(button) = imp.danmaku_anime_candidate_button.borrow().as_ref() {
+            button.set_visible(names.len() > 1);
+        }
+        let Some(list) = imp.danmaku_anime_candidate_list.borrow().as_ref().cloned() else {
+            return;
+        };
+        while let Some(child) = list.first_child() {
+            list.remove(&child);
+        }
+        let current = imp.danmaku_anime_row.text();
+        for name in names {
+            let row = adw::ActionRow::new();
+            row.set_title(&glib::markup_escape_text(name));
+            row.set_activatable(true);
+            let selected = gtk::Image::from_icon_name("object-select-symbolic");
+            selected.set_visible(name == current.as_str());
+            row.add_suffix(&selected);
+            let name = name.clone();
+            row.connect_activated(glib::clone!(
+                #[weak(rename_to = obj)]
+                self,
+                move |_| {
+                    obj.imp().danmaku_anime_row.set_text(&name);
+                    if let Some(popover) =
+                        obj.imp().danmaku_anime_candidate_popover.borrow().as_ref()
+                    {
+                        popover.popdown();
+                    }
+                }
+            ));
+            list.append(&row);
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    async fn fetch_dandanplay_anime_titles(&self, tmdb_id: i32) -> Vec<String> {
+        let Ok(response) = self
+            .search_danmaku_episodes(DanmakuEpisodeSearchParams::new("", "", Some(tmdb_id)))
+            .await
+        else {
+            return Vec::new();
+        };
+        response
+            .animes
+            .unwrap_or_default()
+            .into_iter()
+            .map(|anime| anime.anime_title)
+            .unique()
+            .collect()
+    }
+
+    #[cfg(target_os = "linux")]
     fn prepare_danmaku_popover(&self) {
         self.rebuild_danmaku_server_list();
         let Some(item) = self.current_video() else {
             return;
         };
         let video_id = item.id();
+        let context_key = Self::danmaku_context_key(&item);
         let anime = item.series_name().unwrap_or_else(|| item.name());
         let episode = if item.item_type() == "Movie" {
             String::new()
@@ -662,7 +837,11 @@ impl MPVPage {
         } else {
             item.name()
         };
-        self.imp().danmaku_anime_row.set_text(&anime);
+        let names = self.remember_danmaku_names(&context_key, [anime], false);
+        self.imp()
+            .danmaku_anime_row
+            .set_text(names.first().map(String::as_str).unwrap_or_default());
+        self.rebuild_danmaku_anime_candidate_picker(&names);
         self.imp().danmaku_episode_row.set_text(&episode);
         self.imp().danmaku_tmdb_row.set_text("");
 
@@ -670,13 +849,19 @@ impl MPVPage {
             #[weak(rename_to = obj)]
             self,
             async move {
-                if let Some(tmdb_id) = obj.resolve_tmdb_id(item).await
-                    && obj
-                        .current_video()
-                        .is_some_and(|item| item.id() == video_id)
-                {
-                    obj.imp().danmaku_tmdb_row.set_text(&tmdb_id.to_string());
+                let Some(tmdb_id) = obj.resolve_tmdb_id(item).await else {
+                    return;
+                };
+                if obj.current_video().is_none_or(|item| item.id() != video_id) {
+                    return;
                 }
+                obj.imp().danmaku_tmdb_row.set_text(&tmdb_id.to_string());
+                let titles = obj.fetch_dandanplay_anime_titles(tmdb_id).await;
+                if obj.current_video().is_none_or(|item| item.id() != video_id) {
+                    return;
+                }
+                let names = obj.remember_danmaku_names(&context_key, titles, false);
+                obj.rebuild_danmaku_anime_candidate_picker(&names);
             }
         ));
     }
@@ -910,6 +1095,14 @@ impl MPVPage {
         let tmdb_id = imp.danmaku_tmdb_row.text().trim().parse().ok();
         let params = DanmakuEpisodeSearchParams::new(&anime, &episode, tmdb_id);
         let generation = self.next_danmaku_search_generation();
+        if let Some(item) = self.current_video() {
+            let names = self.remember_danmaku_names(
+                &Self::danmaku_context_key(&item),
+                [anime.to_string()],
+                true,
+            );
+            self.rebuild_danmaku_anime_candidate_picker(&names);
+        }
 
         match self.search_danmaku_episodes(params).await {
             Ok(response) if self.imp().danmaku_search_generation.get() == generation => {
