@@ -38,6 +38,7 @@ use adw::{
 };
 
 const MAX_VOLUME: i64 = 100;
+type DanmakuTimelineHandler = Box<dyn Fn(&MPVPlaySink, Vec<f64>)>;
 
 mod imp {
     use super::*;
@@ -54,6 +55,7 @@ mod imp {
         pub danmaku_source: RefCell<Option<String>>,
         pub danmaku_generation: Cell<u64>,
         pub playback_speed: Cell<f64>,
+        pub danmaku_timeline_handlers: RefCell<Vec<DanmakuTimelineHandler>>,
     }
 
     impl Default for MPVPlaySink {
@@ -70,6 +72,7 @@ mod imp {
                 danmaku_source: RefCell::new(None),
                 danmaku_generation: Cell::new(0),
                 playback_speed: Cell::new(1.0),
+                danmaku_timeline_handlers: RefCell::new(Vec::new()),
             }
         }
     }
@@ -372,10 +375,12 @@ impl MPVPlaySink {
 
     fn apply_danmaku_items(&self, items: Vec<Danmaku>) {
         let loaded = !items.is_empty();
+        let timeline = danmaku_timeline(&items);
         self.imp().danmaku.load_danmaku(items);
         self.imp().danmaku_loaded.set(loaded);
         self.preroll_danmaku(self.position() * 1000.0);
         self.sync_danmaku_playback();
+        self.emit_danmaku_timeline(timeline);
     }
 
     fn apply_danmaku_appearance(&self) {
@@ -413,6 +418,20 @@ impl MPVPlaySink {
         self.imp().danmaku_running.set(false);
         self.imp().danmaku.set_paused(true);
         self.imp().danmaku.load_danmaku(Vec::new());
+        self.emit_danmaku_timeline(Vec::new());
+    }
+
+    pub fn connect_danmaku_timeline_changed(&self, callback: impl Fn(&Self, Vec<f64>) + 'static) {
+        self.imp()
+            .danmaku_timeline_handlers
+            .borrow_mut()
+            .push(Box::new(callback));
+    }
+
+    fn emit_danmaku_timeline(&self, timeline: Vec<f64>) {
+        for callback in self.imp().danmaku_timeline_handlers.borrow().iter() {
+            callback(self, timeline.clone());
+        }
     }
 
     fn preroll_danmaku(&self, position_millis: f64) {
@@ -448,6 +467,15 @@ async fn fetch_url_content(url: &str) -> Result<String, Box<dyn std::error::Erro
     let file = gio::File::for_uri(url);
     let (bytes, _) = file.load_contents_future().await?;
     Ok(String::from_utf8(bytes.to_vec())?)
+}
+
+fn danmaku_timeline(items: &[Danmaku]) -> Vec<f64> {
+    items
+        .iter()
+        .filter_map(|item| {
+            (item.start.is_finite() && item.start >= 0.0).then_some(item.start / 1000.0)
+        })
+        .collect()
 }
 
 fn configure_mpv(player: &MutsumiVideoPlayer) {
