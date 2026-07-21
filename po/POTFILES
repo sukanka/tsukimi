@@ -24,10 +24,9 @@ src/ui/mpv/mod.rs
 src/ui/mpv/mpris/metadata.rs
 src/ui/mpv/mpris/mod.rs
 src/ui/mpv/mpris/track_list.rs
-src/ui/mpv/mpvglarea.rs
 src/ui/mpv/options_matcher.rs
 src/ui/mpv/page.rs
-src/ui/mpv/tsukimi_mpv.rs
+src/ui/mpv/sink.rs
 src/ui/mpv/video_scale.rs
 src/ui/mpv/volume_bar.rs
 src/ui/provider/account_item.rs
