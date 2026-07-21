@@ -16,6 +16,7 @@ use mutsumi::*;
 use std::{
     cell::Cell,
     rc::Rc,
+    time::Instant,
 };
 
 #[cfg(target_os = "linux")]
@@ -61,6 +62,14 @@ impl dandanapi::Request for DanmakuEpisodes {
     fn params(&self) -> Option<&Self::Params> {
         Some(&self.0)
     }
+}
+
+#[cfg(target_os = "linux")]
+struct DanmakuLoadResult {
+    items: Vec<Danmaku>,
+    raw_count: usize,
+    fetch_elapsed_ms: u128,
+    convert_elapsed_ms: u128,
 }
 
 use super::{
@@ -907,7 +916,7 @@ impl MPVPage {
     }
 
     #[cfg(target_os = "linux")]
-    async fn request_danmaku(&self, episode_id: i64) -> Result<Vec<Danmaku>> {
+    async fn request_danmaku(&self, episode_id: i64) -> Result<DanmakuLoadResult> {
         let route = self.dandan_client()?.route(dandanapi::Comments {
             episode_id,
             request_comments: dandanapi::RequestComments {
@@ -917,13 +926,21 @@ impl MPVPage {
             },
         });
         spawn_tokio(async move {
-            Ok(route
-                .await?
-                .comments
-                .unwrap_or_default()
+            let fetch_started = Instant::now();
+            let comments = route.await?.comments.unwrap_or_default();
+            let fetch_elapsed_ms = fetch_started.elapsed().as_millis();
+            let raw_count = comments.len();
+            let convert_started = Instant::now();
+            let items = comments
                 .into_iter()
                 .filter_map(DanmakuConvert::into_danmaku)
-                .collect())
+                .collect();
+            Ok(DanmakuLoadResult {
+                items,
+                raw_count,
+                fetch_elapsed_ms,
+                convert_elapsed_ms: convert_started.elapsed().as_millis(),
+            })
         })
         .await
     }
@@ -958,6 +975,7 @@ impl MPVPage {
         let server = Self::danmaku_server_label(SETTINGS.danmaku_active_server());
         tracing::info!(?params, %server, "Automatic danmaku search started");
 
+        let search_started = Instant::now();
         match self.search_danmaku_episodes(params).await {
             Ok(response) => {
                 if self.danmaku_request_is_stale(generation, &video_id) {
@@ -969,14 +987,30 @@ impl MPVPage {
                         .find_map(|anime| anime.episodes.first().map(|episode| episode.episode_id))
                 });
                 if let Some(episode_id) = episode_id {
+                    tracing::info!(
+                        episode_id,
+                        elapsed_ms = search_started.elapsed().as_millis(),
+                        %server,
+                        "Automatic danmaku search matched"
+                    );
                     self.load_danmaku_episode_for_video(episode_id, video_id, generation, true)
                         .await;
                 } else {
+                    tracing::info!(
+                        elapsed_ms = search_started.elapsed().as_millis(),
+                        %server,
+                        "Automatic danmaku search returned no episodes"
+                    );
                     self.clear_danmaku_items(&gettext("No Danmaku Loaded"));
                 }
             }
             Err(error) => {
-                tracing::warn!(%error, %server, "Automatic danmaku search failed");
+                tracing::warn!(
+                    %error,
+                    elapsed_ms = search_started.elapsed().as_millis(),
+                    %server,
+                    "Automatic danmaku search failed"
+                );
                 if !self.danmaku_request_is_stale(generation, &video_id) {
                     self.clear_danmaku_items(&gettext("No Danmaku Loaded"));
                 }
@@ -998,25 +1032,47 @@ impl MPVPage {
     async fn load_danmaku_episode_for_video(
         &self, episode_id: i64, video_id: String, generation: u64, automatic: bool,
     ) {
+        let started = Instant::now();
         match self.request_danmaku(episode_id).await {
-            Ok(danmaku) => {
+            Ok(result) => {
                 if self.danmaku_request_is_stale(generation, &video_id)
                     || automatic && self.imp().video.has_external_danmaku_source()
                 {
                     return;
                 }
-                let count = danmaku.len();
-                self.imp().danmaku_list.replace(Some(danmaku.clone()));
-                self.imp().video.load_danmaku_items(danmaku);
+                let count = result.items.len();
+                tracing::debug!(
+                    episode_id,
+                    raw_count = result.raw_count,
+                    count,
+                    fetch_elapsed_ms = result.fetch_elapsed_ms,
+                    convert_elapsed_ms = result.convert_elapsed_ms,
+                    automatic,
+                    "Danmaku request completed"
+                );
+                self.imp().danmaku_list.replace(Some(result.items.clone()));
+                self.imp().video.load_danmaku_items(result.items);
                 self.imp().danmaku_page.set_description(&format!(
                     "{} {}",
                     count,
                     gettext("Danmaku Loaded")
                 ));
-                tracing::info!(episode_id, count, automatic, "Danmaku loaded");
+                tracing::info!(
+                    episode_id,
+                    count,
+                    automatic,
+                    elapsed_ms = started.elapsed().as_millis(),
+                    "Danmaku loaded"
+                );
             }
             Err(error) => {
-                tracing::warn!(episode_id, %error, "Danmaku load failed");
+                tracing::warn!(
+                    episode_id,
+                    %error,
+                    automatic,
+                    elapsed_ms = started.elapsed().as_millis(),
+                    "Danmaku load failed"
+                );
                 if !self.danmaku_request_is_stale(generation, &video_id) {
                     self.clear_danmaku_items(&gettext("Failed to load danmaku"));
                 }
@@ -1109,14 +1165,40 @@ impl MPVPage {
             self.rebuild_danmaku_anime_candidate_picker(&names);
         }
 
+        let server = Self::danmaku_server_label(SETTINGS.danmaku_active_server());
+        let search_started = Instant::now();
+        tracing::info!(generation, ?params, %server, "Manual danmaku search started");
         match self.search_danmaku_episodes(params).await {
             Ok(response) if self.imp().danmaku_search_generation.get() == generation => {
+                let count = response
+                    .animes
+                    .as_ref()
+                    .map(|animes| {
+                        animes
+                            .iter()
+                            .map(|anime| anime.episodes.len())
+                            .sum::<usize>()
+                    })
+                    .unwrap_or_default();
+                tracing::info!(
+                    generation,
+                    count,
+                    elapsed_ms = search_started.elapsed().as_millis(),
+                    %server,
+                    "Manual danmaku search completed"
+                );
                 self.imp().danmaku_popover.popdown();
                 self.show_danmaku_selection_dialog(response);
             }
             Ok(_) => {}
             Err(error) if self.imp().danmaku_search_generation.get() == generation => {
-                tracing::warn!(%error, "Manual danmaku search failed");
+                tracing::warn!(
+                    generation,
+                    %error,
+                    elapsed_ms = search_started.elapsed().as_millis(),
+                    %server,
+                    "Manual danmaku search failed"
+                );
                 self.toast(gettext("No Danmaku Loaded"));
             }
             Err(_) => {}
