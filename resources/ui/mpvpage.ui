@@ -523,7 +523,7 @@
     <property name="position">top</property>
     <property name="has-arrow">true</property>
     <signal name="map" handler="on_popover_opened" swapped="yes" />
-    <signal name="unmap" handler="on_popover_closed" swapped="yes" />
+    <signal name="unmap" handler="on_danmaku_popover_closed" swapped="yes" />
     <child>
       <object class="GtkScrolledWindow">
         <child>
@@ -583,99 +583,80 @@
   </object>
 
   <object class="GtkPopover" id="danmaku_popover">
-    <property name="height-request">120</property>
-    <property name="width-request">260</property>
+    <property name="height-request">410</property>
+    <property name="width-request">420</property>
     <property name="position">top</property>
     <property name="has-arrow">true</property>
-    <signal name="map" handler="on_popover_opened" swapped="yes" />
+    <signal name="map" handler="on_danmaku_popover_opened" swapped="yes" />
     <signal name="unmap" handler="on_popover_closed" swapped="yes" />
     <child>
-      <object class="GtkListBox">
-        <property name="selection-mode">none</property>
-        <property name="margin-top">12</property>
-        <property name="margin-bottom">12</property>
-        <property name="margin-start">12</property>
-        <property name="margin-end">12</property>
-        <style>
-          <class name="boxed-list-separate" />
-        </style>
-        <child>
-          <object class="AdwActionRow">
-            <property name="title" translatable="yes">Enable Danmaku</property>
-            <property name="activatable-widget">danmaku_switch</property>
-            <child>
+      <object class="AdwToolbarView">
+        <child type="top">
+          <object class="AdwHeaderBar">
+            <property name="show-start-title-buttons">false</property>
+            <property name="show-end-title-buttons">false</property>
+            <property name="title-widget">
+              <object class="GtkLabel">
+                <property name="label" translatable="yes">Danmaku</property>
+                <style><class name="heading" /></style>
+              </object>
+            </property>
+            <child type="end">
               <object class="GtkSwitch" id="danmaku_switch">
                 <property name="valign">center</property>
+                <signal name="state-set" handler="on_danmaku_switch_state_set" swapped="yes" />
               </object>
             </child>
           </object>
         </child>
+        <property name="content">
+          <object class="AdwPreferencesPage" id="danmaku_page">
+            <property name="description" translatable="yes">No Danmaku Loaded</property>
+            <child>
+              <object class="AdwPreferencesGroup">
+                <property name="title" translatable="yes">Search Danmaku Manually</property>
+                <property name="sensitive" bind-source="danmaku_switch" bind-property="active" bind-flags="sync-create" />
+                <child>
+                  <object class="AdwEntryRow" id="danmaku_anime_row">
+                    <property name="title" translatable="yes">Anime</property>
+                  </object>
+                </child>
+                <child>
+                  <object class="AdwEntryRow" id="danmaku_episode_row">
+                    <property name="title" translatable="yes">Episode</property>
+                  </object>
+                </child>
+                <child>
+                  <object class="AdwEntryRow" id="danmaku_tmdb_row">
+                    <property name="title" translatable="yes">TMDB ID</property>
+                    <property name="input-purpose">digits</property>
+                  </object>
+                </child>
+                <child>
+                  <object class="AdwButtonRow">
+                    <property name="title" translatable="yes">Search</property>
+                    <property name="start-icon-name">edit-find-symbolic</property>
+                    <signal name="activated" handler="on_danmaku_search_clicked" swapped="yes" />
+                    <style><class name="suggested-action" /></style>
+                  </object>
+                </child>
+              </object>
+            </child>
+            <child>
+              <object class="AdwPreferencesGroup" id="danmaku_server_group">
+                <property name="title" translatable="yes">Danmaku Server</property>
+                <property name="sensitive" bind-source="danmaku_switch" bind-property="active" bind-flags="sync-create" />
+                <child>
+                  <object class="AdwExpanderRow" id="danmaku_server_expander">
+                    <property name="title" translatable="yes">Server</property>
+                  </object>
+                </child>
+              </object>
+            </child>
+          </object>
+        </property>
       </object>
     </child>
-  </object>
-
-  <object class="GtkAdjustment" id="danmaku_top_padding_adj">
-    <property name="lower">0</property>
-    <property name="upper">50</property>
-    <property name="value">10</property>
-    <property name="step_increment">1</property>
-    <property name="page_increment">4</property>
-  </object>
-
-  <object class="GtkAdjustment" id="danmaku_font_size_adj">
-    <property name="lower">0</property>
-    <property name="upper">100</property>
-    <property name="value">24</property>
-    <property name="step_increment">1</property>
-    <property name="page_increment">4</property>
-  </object>
-
-  <object class="GtkAdjustment" id="scroll_danmaku_max_lines_adj">
-    <property name="lower">0</property>
-    <property name="upper">80</property>
-    <property name="value">20</property>
-    <property name="step_increment">1</property>
-    <property name="page_increment">4</property>
-  </object>
-
-  <object class="GtkAdjustment" id="danmaku_row_spacing_adj">
-    <property name="lower">0</property>
-    <property name="upper">50</property>
-    <property name="value">10</property>
-    <property name="step_increment">1</property>
-    <property name="page_increment">4</property>
-  </object>
-
-  <object class="GtkAdjustment" id="topcenter_danmaku_max_lines_adj">
-    <property name="lower">0</property>
-    <property name="upper">12</property>
-    <property name="value">5</property>
-    <property name="step_increment">1</property>
-    <property name="page_increment">4</property>
-  </object>
-
-  <object class="GtkAdjustment" id="bottomcenter_danmaku_max_lines_adj">
-    <property name="lower">0</property>
-    <property name="upper">12</property>
-    <property name="value">5</property>
-    <property name="step_increment">1</property>
-    <property name="page_increment">4</property>
-  </object>
-
-  <object class="GtkAdjustment" id="danmaku_speed_adj">
-    <property name="lower">0.10</property>
-    <property name="upper">5.00</property>
-    <property name="value">1.00</property>
-    <property name="step_increment">0.05</property>
-    <property name="page_increment">0.2</property>
-  </object>
-
-  <object class="GtkAdjustment" id="danmaku_opacity_adj">
-    <property name="lower">0.01</property>
-    <property name="upper">1.00</property>
-    <property name="value">1.00</property>
-    <property name="step_increment">0.05</property>
-    <property name="page_increment">0.2</property>
   </object>
 
   <object class="GtkAdjustment" id="playback_speed_adj">
