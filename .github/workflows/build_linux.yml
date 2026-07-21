@@ -56,7 +56,7 @@ jobs:
         env:
           DANDANAPI_SECRET_KEY: ${{ secrets.DANDANAPI_SECRET_KEY }}
         run: |
-          echo $DANDANAPI_SECRET_KEY > secret/key
+          printf '%s\n' "$DANDANAPI_SECRET_KEY" > secret/key
           meson setup build --prefix=/usr
           meson compile -C build
           meson install -C build --destdir "$PWD/artifact/tsukimi-${{ matrix.platform }}-linux"
