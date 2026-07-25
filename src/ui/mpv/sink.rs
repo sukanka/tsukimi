@@ -3,6 +3,14 @@ use std::cell::{
     RefCell,
 };
 
+use crate::{
+    ui::models::SETTINGS,
+    utils::spawn,
+};
+use adw::{
+    prelude::*,
+    subclass::prelude::*,
+};
 use glib::Object;
 use gtk::{
     gio,
@@ -17,14 +25,6 @@ use mutsumi::{
     MutsumiVideoPlayer,
     TrackKind,
     TrackSelection,
-};
-use crate::{
-    ui::models::SETTINGS,
-    utils::spawn,
-};
-use adw::{
-    prelude::*,
-    subclass::prelude::*,
 };
 
 type DanmakuTimelineHandler = Box<dyn Fn(&MPVPlaySink, Vec<f64>)>;
