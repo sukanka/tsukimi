@@ -1916,6 +1916,7 @@ impl MPVPage {
                         ListenEvent::Duration(value) => {
                             obj.update_duration(value);
                         }
+                        ListenEvent::DemuxerCacheIdle(_) => {}
                         ListenEvent::PausedForCache(true, _) => {
                             obj.imp().video.set_buffering(true);
                             obj.update_seeking(true);
