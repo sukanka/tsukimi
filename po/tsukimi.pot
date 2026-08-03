@@ -139,7 +139,7 @@ msgstr ""
 msgid "Others"
 msgstr ""
 
-#: resources/ui/account_settings.ui:291 resources/ui/account_settings.ui:476
+#: resources/ui/account_settings.ui:291 resources/ui/account_settings.ui:590
 msgid "Preferred Video Version"
 msgstr ""
 
@@ -208,90 +208,157 @@ msgstr ""
 msgid "Config dir"
 msgstr ""
 
-#: resources/ui/account_settings.ui:454
+#: resources/ui/account_settings.ui:454 resources/ui/danmaku_popover.ui:13
+#: resources/ui/danmaku_popover.ui:22 resources/ui/mpvpage.ui:395
+#: src/ui/mpv/danmaku_popover.rs:42
+msgid "Danmaku"
+msgstr ""
+
+#: resources/ui/account_settings.ui:459
+msgid "dandanplay Credentials"
+msgstr ""
+
+#: resources/ui/account_settings.ui:460
+msgid ""
+"The encrypted built-in credential is used only with the official server. "
+"Custom servers are unsigned unless both custom fields are filled."
+msgstr ""
+
+#: resources/ui/account_settings.ui:473
+msgid "Apply Credentials"
+msgstr ""
+
+#: resources/ui/account_settings.ui:483
+msgid "Use Built-in Credentials"
+msgstr ""
+
+#: resources/ui/account_settings.ui:492
+msgid "Danmaku Servers"
+msgstr ""
+
+#: resources/ui/account_settings.ui:493
+msgid "Custom servers must implement the dandanplay API."
+msgstr ""
+
+#: resources/ui/account_settings.ui:496
+msgid "Active Server"
+msgstr ""
+
+#: resources/ui/account_settings.ui:502
+msgid "Edit Selected Custom Server"
+msgstr ""
+
+#: resources/ui/account_settings.ui:506 resources/ui/account_settings.ui:531
+#: resources/ui/account.ui:48 resources/ui/account.ui:245
+#: resources/ui/identify_dialog.ui:75 resources/ui/other.ui:73
+msgid "Name"
+msgstr ""
+
+#: resources/ui/account_settings.ui:511 resources/ui/account_settings.ui:536
+msgid "Base URL"
+msgstr ""
+
+#: resources/ui/account_settings.ui:516
+msgid "Update Server"
+msgstr ""
+
+#: resources/ui/account_settings.ui:528
+msgid "Add Custom Server"
+msgstr ""
+
+#: resources/ui/account_settings.ui:541 resources/ui/window.ui:166
+msgid "Add Server"
+msgstr ""
+
+#: resources/ui/account_settings.ui:553
+msgid "Remove Selected Server"
+msgstr ""
+
+#: resources/ui/account_settings.ui:568
 msgid "Preferred Version"
 msgstr ""
 
-#: resources/ui/account_settings.ui:477
+#: resources/ui/account_settings.ui:591
 msgid ""
 "Weight is ordered from high to low, until a specific version is matched, or "
 "the highest matching version is obtained before clearing the match list"
 msgstr ""
 
-#: resources/ui/account_settings.ui:492
+#: resources/ui/account_settings.ui:606
 msgid "Descriptors"
 msgstr ""
 
-#: resources/ui/account_settings.ui:514
+#: resources/ui/account_settings.ui:628
 msgid "It is recommended to set no more than 3 lines"
 msgstr ""
 
-#: resources/ui/account_settings.ui:534
+#: resources/ui/account_settings.ui:648
 msgid "No Descriptors"
 msgstr ""
 
-#: resources/ui/account_settings.ui:553
+#: resources/ui/account_settings.ui:667
 msgid "Add a descriptor"
 msgstr ""
 
-#: resources/ui/account_settings.ui:564 resources/ui/account_settings.ui:674
-#: src/ui/widgets/identify/search_page.rs:130
+#: resources/ui/account_settings.ui:678 resources/ui/account_settings.ui:788
+#: resources/ui/account.ui:219 src/ui/widgets/identify/search_page.rs:130
 #: src/ui/widgets/image_dialog/search_page.rs:148
-#: src/ui/widgets/metadata_dialog.rs:289 src/ui/widgets/tu_item/action.rs:489
-#: src/ui/widgets/tu_item/action.rs:549
+#: src/ui/widgets/metadata_dialog.rs:289 src/ui/widgets/tu_item/action.rs:497
+#: src/ui/widgets/tu_item/action.rs:557
 msgid "Cancel"
 msgstr ""
 
-#: resources/ui/account_settings.ui:570 resources/ui/account.ui:108
+#: resources/ui/account_settings.ui:684 resources/ui/account.ui:120
+#: resources/ui/account.ui:163
 msgid "Add"
 msgstr ""
 
-#: resources/ui/account_settings.ui:595 resources/ui/account_settings.ui:705
+#: resources/ui/account_settings.ui:709 resources/ui/account_settings.ui:819
 msgid "This will use exact matching to obtain a list"
 msgstr ""
 
-#: resources/ui/account_settings.ui:598 resources/ui/account_settings.ui:708
+#: resources/ui/account_settings.ui:712 resources/ui/account_settings.ui:822
 msgid "Descriptor Type"
 msgstr ""
 
-#: resources/ui/account_settings.ui:603 resources/ui/account_settings.ui:713
+#: resources/ui/account_settings.ui:717 resources/ui/account_settings.ui:827
 msgid "String"
 msgstr ""
 
-#: resources/ui/account_settings.ui:604 resources/ui/account_settings.ui:714
+#: resources/ui/account_settings.ui:718 resources/ui/account_settings.ui:828
 msgid "Regular Expression"
 msgstr ""
 
-#: resources/ui/account_settings.ui:616 resources/ui/account_settings.ui:726
+#: resources/ui/account_settings.ui:730 resources/ui/account_settings.ui:840
 msgid "Descriptor"
 msgstr ""
 
-#: resources/ui/account_settings.ui:621 resources/ui/account_settings.ui:731
+#: resources/ui/account_settings.ui:735 resources/ui/account_settings.ui:845
 msgid "Descriptor should not be too long"
 msgstr ""
 
-#: resources/ui/account_settings.ui:632 resources/ui/account_settings.ui:742
+#: resources/ui/account_settings.ui:746 resources/ui/account_settings.ui:856
 msgid "eg. 1080p"
 msgstr ""
 
-#: resources/ui/account_settings.ui:643 resources/ui/account_settings.ui:753
+#: resources/ui/account_settings.ui:757 resources/ui/account_settings.ui:867
 msgid "eg. 1080p.*WebDL"
 msgstr ""
 
-#: resources/ui/account_settings.ui:663
+#: resources/ui/account_settings.ui:777
 msgid "Edit descriptor"
 msgstr ""
 
-#: resources/ui/account_settings.ui:680
+#: resources/ui/account_settings.ui:794 resources/ui/account.ui:225
 #: resources/ui/image_dialog_edit_page.ui:37
 msgid "Save"
 msgstr ""
 
-#: resources/ui/account_settings.ui:773
+#: resources/ui/account_settings.ui:887
 msgid "Change folder"
 msgstr ""
 
-#: resources/ui/account_settings.ui:775
+#: resources/ui/account_settings.ui:889
 msgid "Select new mpv config folder"
 msgstr ""
 
@@ -303,37 +370,60 @@ msgstr ""
 msgid "Enter the server details below."
 msgstr ""
 
-#: resources/ui/account.ui:48 resources/ui/identify_dialog.ui:75
-#: resources/ui/other.ui:73
-msgid "Name"
-msgstr ""
-
-#: resources/ui/account.ui:66
+#: resources/ui/account.ui:66 resources/ui/account.ui:250
 msgid "Server Address"
 msgstr ""
 
-#: resources/ui/account.ui:85
+#: resources/ui/account.ui:85 resources/ui/account.ui:268
 msgid "Port"
 msgstr ""
 
 #: resources/ui/account.ui:92
+msgid "Route Name (optional, e.g. \"LAN\", \"WAN\")"
+msgstr ""
+
+#: resources/ui/account.ui:97 resources/ui/account.ui:275
+msgid "URL Path Prefix (optional, e.g. for reverse proxy)"
+msgstr ""
+
+#: resources/ui/account.ui:102
 msgid "Username"
 msgstr ""
 
-#: resources/ui/account.ui:97
+#: resources/ui/account.ui:107
 msgid "Password"
+msgstr ""
+
+#: resources/ui/account.ui:116
+msgid "Additional Routes"
+msgstr ""
+
+#: resources/ui/account.ui:117
+msgid ""
+"Alternative network routes. You can switch between them after logging in."
+msgstr ""
+
+#: resources/ui/account.ui:122
+msgid "Add Route"
+msgstr ""
+
+#: resources/ui/account.ui:136
+msgid "No additional routes"
+msgstr ""
+
+#: resources/ui/account.ui:137
+msgid "Click the Add button to add a route."
+msgstr ""
+
+#: resources/ui/account.ui:208 resources/ui/item.ui:267
+msgid "Route"
 msgstr ""
 
 #: resources/ui/album_widget.ui:94 resources/ui/item.ui:184
 #: resources/ui/mpv_menu_actions.ui:27 resources/ui/other.ui:95
-#: resources/ui/player_toolbar.ui:90 src/ui/mpv/page.rs:409
-#: src/ui/mpv/page.rs:411 src/ui/widgets/item.rs:693
+#: resources/ui/player_toolbar.ui:90 src/ui/mpv/page.rs:576
+#: src/ui/mpv/page.rs:578 src/ui/widgets/item.rs:696
 msgid "Play"
-msgstr ""
-
-#: resources/ui/danmaku_popover.ui:13 resources/ui/danmaku_popover.ui:22
-#: resources/ui/mpvpage.ui:395 src/ui/mpv/danmaku_popover.rs:39
-msgid "Danmaku"
 msgstr ""
 
 #: resources/ui/danmaku_popover.ui:33
@@ -455,7 +545,7 @@ msgid "Search Danmaku"
 msgstr ""
 
 #: resources/ui/danmaku_search_dialog.ui:32 resources/ui/metadata_dialog.ui:91
-#: resources/ui/single_grid.ui:105 src/ui/widgets/item.rs:1087
+#: resources/ui/single_grid.ui:105 src/ui/widgets/item.rs:1095
 msgid "Title"
 msgstr ""
 
@@ -510,8 +600,8 @@ msgstr ""
 
 #: resources/ui/danmaku_search_dialog.ui:70 resources/ui/identify_dialog.ui:95
 #: resources/ui/image_info_card.ui:127 resources/ui/search.ui:23
-#: resources/ui/window.ui:21 resources/ui/window.ui:261
-#: src/ui/widgets/window.rs:310
+#: resources/ui/window.ui:21 resources/ui/window.ui:272
+#: src/ui/widgets/window.rs:321
 msgid "Search"
 msgstr ""
 
@@ -552,12 +642,12 @@ msgstr ""
 msgid "Continue Play"
 msgstr ""
 
-#: resources/ui/filter.ui:78 resources/ui/item.ui:482 resources/ui/other.ui:173
+#: resources/ui/filter.ui:78 resources/ui/item.ui:505 resources/ui/other.ui:173
 #: src/ui/widgets/list.rs:133
 msgid "Genres"
 msgstr ""
 
-#: resources/ui/filter.ui:85 resources/ui/item.ui:487 resources/ui/other.ui:168
+#: resources/ui/filter.ui:85 resources/ui/item.ui:510 resources/ui/other.ui:168
 #: src/ui/widgets/list.rs:132
 msgid "Tags"
 msgstr ""
@@ -570,7 +660,7 @@ msgstr ""
 msgid "Official Ratings"
 msgstr ""
 
-#: resources/ui/filter.ui:106 resources/ui/item.ui:477
+#: resources/ui/filter.ui:106 resources/ui/item.ui:500
 #: resources/ui/other.ui:163
 msgid "Studios"
 msgstr ""
@@ -609,7 +699,7 @@ msgid "Library"
 msgstr ""
 
 #. if merged, next up will contain resume items, so change title to continue watching
-#: resources/ui/home.ui:21 resources/ui/item.ui:298 src/ui/widgets/home.rs:228
+#: resources/ui/home.ui:21 resources/ui/item.ui:321 src/ui/widgets/home.rs:228
 msgid "Continue Watching"
 msgstr ""
 
@@ -705,7 +795,7 @@ msgid "Edit"
 msgstr ""
 
 #: resources/ui/image_info_card.ui:139 resources/ui/pop-menu.ui:93
-#: resources/ui/server_action_row.ui:52 src/ui/widgets/tu_item/action.rs:490
+#: resources/ui/server_action_row.ui:52 src/ui/widgets/tu_item/action.rs:498
 msgid "Delete"
 msgstr ""
 
@@ -749,40 +839,48 @@ msgstr ""
 msgid "Subtitle: "
 msgstr ""
 
-#: resources/ui/item.ui:312
+#: resources/ui/item.ui:258
+msgid "Route: "
+msgstr ""
+
+#: resources/ui/item.ui:268 resources/ui/window.ui:234
+msgid "Switch Route"
+msgstr ""
+
+#: resources/ui/item.ui:335
 msgid "View this season"
 msgstr ""
 
-#: resources/ui/item.ui:421 resources/ui/liked.ui:69
+#: resources/ui/item.ui:444 resources/ui/liked.ui:69
 #: resources/ui/single_grid.ui:164
 msgid "Nothing Here"
 msgstr ""
 
-#: resources/ui/item.ui:447
+#: resources/ui/item.ui:470
 msgid "Included In"
 msgstr ""
 
-#: resources/ui/item.ui:452
+#: resources/ui/item.ui:475
 msgid "Additional Parts"
 msgstr ""
 
-#: resources/ui/item.ui:457
+#: resources/ui/item.ui:480
 msgid "Seasons"
 msgstr ""
 
-#: resources/ui/item.ui:462 resources/ui/other.ui:158
+#: resources/ui/item.ui:485 resources/ui/other.ui:158
 msgid "Actors"
 msgstr ""
 
-#: resources/ui/item.ui:467
+#: resources/ui/item.ui:490
 msgid "Recommend"
 msgstr ""
 
-#: resources/ui/item.ui:472 resources/ui/other.ui:178
+#: resources/ui/item.ui:495 resources/ui/other.ui:178
 msgid "Links"
 msgstr ""
 
-#: resources/ui/item.ui:505
+#: resources/ui/item.ui:528
 msgid "MediaInfo"
 msgstr ""
 
@@ -865,7 +963,7 @@ msgstr ""
 msgid "Upcoming"
 msgstr ""
 
-#: resources/ui/mpv_control_sidebar.ui:5 resources/ui/window.ui:444
+#: resources/ui/mpv_control_sidebar.ui:5 resources/ui/window.ui:455
 msgid "Advanced Settings"
 msgstr ""
 
@@ -1145,7 +1243,7 @@ msgid "Previous chapter"
 msgstr ""
 
 #: resources/ui/mpv_menu.ui:35 resources/ui/mpvpage.ui:179
-#: resources/ui/window.ui:393 resources/ui/window.ui:415
+#: resources/ui/window.ui:404 resources/ui/window.ui:426
 msgid "Playlist"
 msgstr ""
 
@@ -1174,7 +1272,7 @@ msgstr ""
 msgid "Media info (MPV)"
 msgstr ""
 
-#: resources/ui/mpvpage.ui:279 src/ui/mpv/page.rs:414 src/ui/mpv/page.rs:416
+#: resources/ui/mpvpage.ui:279 src/ui/mpv/page.rs:581 src/ui/mpv/page.rs:583
 msgid "Pause"
 msgstr ""
 
@@ -1390,8 +1488,8 @@ msgstr ""
 msgid "Unlike"
 msgstr ""
 
-#: resources/ui/pop-menu.ui:63 src/ui/widgets/tu_item/action.rs:544
-#: src/ui/widgets/tu_item/action.rs:545 src/ui/widgets/tu_item/action.rs:550
+#: resources/ui/pop-menu.ui:63 src/ui/widgets/tu_item/action.rs:552
+#: src/ui/widgets/tu_item/action.rs:553 src/ui/widgets/tu_item/action.rs:558
 msgid "Remove Identification"
 msgstr ""
 
@@ -1491,7 +1589,7 @@ msgstr ""
 msgid "Sort By"
 msgstr ""
 
-#: resources/ui/single_grid.ui:106 src/ui/widgets/item.rs:1091
+#: resources/ui/single_grid.ui:106 src/ui/widgets/item.rs:1099
 msgid "Bitrate"
 msgstr ""
 
@@ -1571,28 +1669,24 @@ msgstr ""
 msgid "No Server"
 msgstr ""
 
-#: resources/ui/window.ui:166
-msgid "Add Server"
-msgstr ""
-
 #: resources/ui/window.ui:205
 msgid "Log Out"
 msgstr ""
 
-#: resources/ui/window.ui:246
+#: resources/ui/window.ui:257
 msgid "Contents"
 msgstr ""
 
-#: resources/ui/window.ui:249 src/ui/widgets/window.rs:286
+#: resources/ui/window.ui:260 src/ui/widgets/window.rs:297
 msgid "Home"
 msgstr ""
 
-#: resources/ui/window.ui:255 src/ui/widgets/list.rs:134
-#: src/ui/widgets/window.rs:298
+#: resources/ui/window.ui:266 src/ui/widgets/list.rs:134
+#: src/ui/widgets/window.rs:309
 msgid "Liked"
 msgstr ""
 
-#: resources/ui/window.ui:269
+#: resources/ui/window.ui:280
 msgid "Servers"
 msgstr ""
 
@@ -1624,137 +1718,186 @@ msgstr ""
 msgid "Deband settings cleared."
 msgstr ""
 
-#: src/ui/mpv/danmaku_popover.rs:37
+#: src/ui/mpv/danmaku_popover.rs:40
 #, rust-format
 msgid "{count} Danmaku Loaded"
 msgstr ""
 
-#: src/ui/mpv/danmaku_popover.rs:45
+#: src/ui/mpv/danmaku_popover.rs:48
 msgid "Searching"
 msgstr ""
 
-#: src/ui/mpv/danmaku_popover.rs:46
+#: src/ui/mpv/danmaku_popover.rs:49
 msgid "Loading"
 msgstr ""
 
-#: src/ui/mpv/danmaku_popover.rs:49
+#: src/ui/mpv/danmaku_popover.rs:53
 msgid "No danmaku found"
 msgstr ""
 
-#: src/ui/mpv/danmaku_popover.rs:50
+#: src/ui/mpv/danmaku_popover.rs:54
 msgid "This feature needs a official build"
 msgstr ""
 
-#: src/ui/mpv/danmaku_popover.rs:51
+#: src/ui/mpv/danmaku_popover.rs:55
 msgid "Disabled"
 msgstr ""
 
-#: src/ui/mpv/danmaku_popover.rs:52
+#: src/ui/mpv/danmaku_popover.rs:56
 msgid "Maybe there is something wrong"
 msgstr ""
 
-#: src/ui/mpv/danmaku_popover.rs:58
+#: src/ui/mpv/danmaku_popover.rs:62
 msgid "From play (Auto Matched)"
 msgstr ""
 
-#: src/ui/mpv/danmaku_popover.rs:60
+#: src/ui/mpv/danmaku_popover.rs:64
 msgid "From play (Manually Matched)"
 msgstr ""
 
-#: src/ui/mpv/danmaku_search_dialog.rs:185
+#: src/ui/mpv/danmaku_popover.rs:66
+msgid "From external danmaku track"
+msgstr ""
+
+#: src/ui/mpv/danmaku_search_dialog.rs:296
 msgid "Enter at least two characters"
 msgstr ""
 
-#: src/ui/mpv/danmaku_search_dialog.rs:207
+#: src/ui/mpv/danmaku_search_dialog.rs:351
 msgid "No matching anime found"
 msgstr ""
 
-#: src/ui/mpv/danmaku_search_dialog.rs:211
+#: src/ui/mpv/danmaku_search_dialog.rs:355
 msgid "Search failed"
 msgstr ""
 
-#: src/ui/mpv/danmaku_search_dialog.rs:242
+#: src/ui/mpv/danmaku_search_dialog.rs:386
 msgid "Invalid episode ID"
 msgstr ""
 
-#: src/ui/mpv/page.rs:1059
+#: src/ui/mpv/page.rs:718
+msgid "External danmaku track"
+msgstr ""
+
+#: src/ui/mpv/page.rs:1682
 msgid "Skip Intro"
 msgstr ""
 
-#: src/ui/mpv/page.rs:1060
+#: src/ui/mpv/page.rs:1683
 msgid "Skip Outro"
 msgstr ""
 
-#: src/ui/mpv/page.rs:1214
+#: src/ui/mpv/page.rs:1835
 msgid "No more video found"
 msgstr ""
 
-#: src/ui/mpv/page.rs:1324
+#: src/ui/mpv/page.rs:1947
 msgid ""
 "MPV has been shutdown, Application will exit.\n"
 "Tsukimi can't restart MPV."
 msgstr ""
 
-#: src/ui/provider/tu_item.rs:632
+#: src/ui/provider/tu_item.rs:638
 msgid "No next up video found"
 msgstr ""
 
-#: src/ui/provider/tu_item.rs:661 src/ui/widgets/tu_overview_item.rs:250
+#: src/ui/provider/tu_item.rs:667 src/ui/widgets/tu_overview_item.rs:250
 msgid "Present"
 msgstr ""
 
-#: src/ui/provider/tu_item.rs:669 src/ui/provider/tu_item.rs:687
-#: src/ui/provider/tu_item.rs:710 src/ui/provider/tu_item.rs:733
-#: src/ui/provider/tu_item.rs:736
+#: src/ui/provider/tu_item.rs:675 src/ui/provider/tu_item.rs:693
+#: src/ui/provider/tu_item.rs:716 src/ui/provider/tu_item.rs:739
+#: src/ui/provider/tu_item.rs:742
 msgid "Unknown"
 msgstr ""
 
-#: src/ui/widgets/account_add.rs:145
+#: src/ui/widgets/account_add.rs:264
 msgid "Fields must be filled in"
 msgstr ""
 
-#: src/ui/widgets/account_add.rs:206
+#: src/ui/widgets/account_add.rs:369
 msgid "Server edited successfully"
 msgstr ""
 
-#: src/ui/widgets/account_add.rs:211
+#: src/ui/widgets/account_add.rs:374
 msgid "Server added successfully"
 msgstr ""
 
-#: src/ui/widgets/account_settings.rs:235
+#: src/ui/widgets/account_add.rs:457
+msgid "Delete Route"
+msgstr ""
+
+#: src/ui/widgets/account_settings.rs:267
 msgid "Password cannot be empty!"
 msgstr ""
 
-#: src/ui/widgets/account_settings.rs:239
+#: src/ui/widgets/account_settings.rs:271
 msgid "Passwords do not match!"
 msgstr ""
 
-#: src/ui/widgets/account_settings.rs:246
+#: src/ui/widgets/account_settings.rs:278
 msgid "Password changed successfully! Please login again."
 msgstr ""
 
-#: src/ui/widgets/account_settings.rs:250
+#: src/ui/widgets/account_settings.rs:282
 msgid "Failed to change password"
 msgstr ""
 
-#: src/ui/widgets/account_settings.rs:284
+#: src/ui/widgets/account_settings.rs:316
 msgid "Cache Cleared"
 msgstr ""
 
-#: src/ui/widgets/account_settings.rs:305
+#: src/ui/widgets/account_settings.rs:337
 msgid "No file selected"
 msgstr ""
 
-#: src/ui/widgets/account_settings.rs:561
-#: src/ui/widgets/account_settings.rs:570
-#: src/ui/widgets/account_settings.rs:604
-#: src/ui/widgets/account_settings.rs:613
+#: src/ui/widgets/account_settings.rs:593
+#: src/ui/widgets/account_settings.rs:602
+#: src/ui/widgets/account_settings.rs:636
+#: src/ui/widgets/account_settings.rs:645
 msgid "Descriptor cannot be empty!"
 msgstr ""
 
-#: src/ui/widgets/account_settings.rs:575
-#: src/ui/widgets/account_settings.rs:618
+#: src/ui/widgets/account_settings.rs:607
+#: src/ui/widgets/account_settings.rs:650
 msgid "Invalid regex"
+msgstr ""
+
+#: src/ui/widgets/account_settings.rs:847
+msgid "Failed to save danmaku credentials."
+msgstr ""
+
+#: src/ui/widgets/account_settings.rs:852
+msgid "Danmaku credentials saved."
+msgstr ""
+
+#: src/ui/widgets/account_settings.rs:859
+msgid "Failed to reset danmaku credentials."
+msgstr ""
+
+#: src/ui/widgets/account_settings.rs:865
+msgid "Built-in credentials restored; custom servers remain unsigned."
+msgstr ""
+
+#: src/ui/widgets/account_settings.rs:943
+msgid "Failed to select danmaku server."
+msgstr ""
+
+#: src/ui/widgets/account_settings.rs:960
+#: src/ui/widgets/account_settings.rs:990
+msgid "A server with this name or URL already exists."
+msgstr ""
+
+#: src/ui/widgets/account_settings.rs:965
+msgid "Failed to save danmaku server."
+msgstr ""
+
+#: src/ui/widgets/account_settings.rs:998
+msgid "Failed to update danmaku server."
+msgstr ""
+
+#: src/ui/widgets/account_settings.rs:1022
+msgid "Failed to remove danmaku server."
 msgstr ""
 
 #: src/ui/widgets/home.rs:393
@@ -1767,7 +1910,7 @@ msgstr ""
 
 #: src/ui/widgets/identify/search_page.rs:127
 #: src/ui/widgets/image_dialog/search_page.rs:145
-#: src/ui/widgets/metadata_dialog.rs:286 src/ui/widgets/tu_item/action.rs:485
+#: src/ui/widgets/metadata_dialog.rs:286 src/ui/widgets/tu_item/action.rs:493
 msgid "Are you sure you wish to continue?"
 msgstr ""
 
@@ -1826,71 +1969,71 @@ msgstr ""
 msgid "Success"
 msgstr ""
 
-#: src/ui/widgets/item.rs:343
+#: src/ui/widgets/item.rs:345
 msgid "No episode selected"
 msgstr ""
 
-#: src/ui/widgets/item.rs:344
+#: src/ui/widgets/item.rs:346
 msgid "Select an episode"
 msgstr ""
 
-#: src/ui/widgets/item.rs:689 src/ui/widgets/list.rs:130
+#: src/ui/widgets/item.rs:692 src/ui/widgets/list.rs:130
 msgid "Resume"
 msgstr ""
 
-#: src/ui/widgets/item.rs:1081
+#: src/ui/widgets/item.rs:1089
 msgid "Codec"
 msgstr ""
 
-#: src/ui/widgets/item.rs:1084
+#: src/ui/widgets/item.rs:1092
 msgid "Language"
 msgstr ""
 
-#: src/ui/widgets/item.rs:1096
+#: src/ui/widgets/item.rs:1104
 msgid "BitDepth"
 msgstr ""
 
-#: src/ui/widgets/item.rs:1100
+#: src/ui/widgets/item.rs:1108
 msgid "SampleRate"
 msgstr ""
 
-#: src/ui/widgets/item.rs:1104
+#: src/ui/widgets/item.rs:1112
 msgid "Height"
 msgstr ""
 
-#: src/ui/widgets/item.rs:1107
+#: src/ui/widgets/item.rs:1115
 msgid "Width"
 msgstr ""
 
-#: src/ui/widgets/item.rs:1110
+#: src/ui/widgets/item.rs:1118
 msgid "ColorSpace"
 msgstr ""
 
-#: src/ui/widgets/item.rs:1114
+#: src/ui/widgets/item.rs:1122
 msgid "DisplayTitle"
 msgstr ""
 
-#: src/ui/widgets/item.rs:1118
+#: src/ui/widgets/item.rs:1126
 msgid "Channel"
 msgstr ""
 
-#: src/ui/widgets/item.rs:1122
+#: src/ui/widgets/item.rs:1130
 msgid "ChannelLayout"
 msgstr ""
 
-#: src/ui/widgets/item.rs:1127
+#: src/ui/widgets/item.rs:1135
 msgid "AverageFrameRate"
 msgstr ""
 
-#: src/ui/widgets/item.rs:1131
+#: src/ui/widgets/item.rs:1139
 msgid "PixelFormat"
 msgstr ""
 
-#: src/ui/widgets/item.rs:1243
+#: src/ui/widgets/item.rs:1251
 msgid "No video source found"
 msgstr ""
 
-#: src/ui/widgets/item.rs:1316
+#: src/ui/widgets/item.rs:1324
 msgid "Season not found. Is this a continue watching list?"
 msgstr ""
 
@@ -1994,34 +2137,34 @@ msgstr ""
 msgid "Add to favorites"
 msgstr ""
 
-#: src/ui/widgets/tu_item/action.rs:479
+#: src/ui/widgets/tu_item/action.rs:487
 msgid "Delete Item"
 msgstr ""
 
-#: src/ui/widgets/tu_item/action.rs:483
+#: src/ui/widgets/tu_item/action.rs:491
 msgid ""
 "Deleting this item will delete it from both the file system and your media "
 "library.\n"
 "The following files and folders will be deleted:"
 msgstr ""
 
-#: src/ui/widgets/tu_item/action.rs:546
+#: src/ui/widgets/tu_item/action.rs:554
 msgid "Are you sure you wish to reset all metadata?"
 msgstr ""
 
-#: src/ui/widgets/window.rs:796
+#: src/ui/widgets/window.rs:900
 msgid "Server Panel"
 msgstr ""
 
-#: src/ui/widgets/window.rs:962
+#: src/ui/widgets/window.rs:1072
 msgid "Fatal Error"
 msgstr ""
 
-#: src/ui/widgets/window.rs:965
+#: src/ui/widgets/window.rs:1075
 msgid "Copy Error & Close"
 msgstr ""
 
 #. TRANSLATORS: 'Name <email@domain.com>' or 'Name https://website.example'
-#: src/ui/widgets/window.rs:994
+#: src/ui/widgets/window.rs:1104
 msgid "translator-credits"
 msgstr ""
