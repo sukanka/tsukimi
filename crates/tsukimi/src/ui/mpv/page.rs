@@ -1,3 +1,8 @@
+use std::time::{
+    Duration,
+    Instant,
+};
+
 use adw::prelude::*;
 use dandanapi_client::SearchSearchEpisodesParams;
 use gettextrs::gettext;
@@ -20,7 +25,11 @@ use url::Url;
 use super::{
     DanmakuPopoverStatus,
     danmaku_cache_map::DanmakuCacheMap,
-    danmaku_client::DanmakuClient,
+    danmaku_client::{
+        DanmakuClient,
+        DanmakuLoadResult,
+        EpisodeSearchResult,
+    },
     sink::MPVPlaySink,
     video_scale::VideoScale,
 };
@@ -42,7 +51,11 @@ use crate::{
     ui::{
         GlobalToast,
         models::SETTINGS,
-        provider::tu_item::TuItem,
+        provider::tu_item::{
+            MOVIE,
+            TuItem,
+            item_type::EPISODE,
+        },
         widgets::{
             check_row::CheckRow,
             item::SelectedVideoSubInfo,
@@ -600,10 +613,156 @@ impl MPVPage {
     }
 
     fn danmaku_search_title(item: &TuItem) -> String {
-        item.season_name()
+        item.series_name()
             .filter(|name| !name.trim().is_empty())
-            .or_else(|| item.series_name().filter(|name| !name.trim().is_empty()))
+            .or_else(|| item.season_name().filter(|name| !name.trim().is_empty()))
             .unwrap_or_else(|| item.name())
+    }
+
+    fn danmaku_search_episode(item: &TuItem) -> Option<String> {
+        let is_episode = item.season_name().is_some() || item.series_name().is_some();
+        is_episode
+            .then(|| item.index_number())
+            .filter(|episode| *episode > 0)
+            .map(|episode| episode.to_string())
+    }
+
+    fn danmaku_search_params(
+        anime: String, episode: Option<String>, tmdb_id: Option<i32>, tmdb_id_type: i32,
+    ) -> SearchSearchEpisodesParams {
+        SearchSearchEpisodesParams {
+            anime: tmdb_id.is_none().then_some(anime),
+            tmdb_id,
+            tmdb_id_type,
+            episode,
+            v2: true,
+        }
+    }
+
+    pub(super) async fn resolve_danmaku_tmdb_id(&self, item: &TuItem) -> Option<i32> {
+        let mut ids = Vec::new();
+        if item.item_type() != EPISODE {
+            ids.push(("item", item.id()));
+        }
+        if let Some(season_id) = item.season_id() {
+            ids.push(("season", season_id));
+        }
+        if let Some(series_id) = item.series_id() {
+            ids.push(("series", series_id));
+        }
+
+        let resolve_started = Instant::now();
+        for (lookup_source, id) in ids.into_iter().unique_by(|(_, id)| id.clone()) {
+            let lookup_started = Instant::now();
+            let lookup_id = id.clone();
+            match spawn_tokio(async move { JELLYFIN_CLIENT.get_item_info(&id).await }).await {
+                Ok(info) => {
+                    if let Some(tmdb_id) = info
+                        .provider_ids
+                        .and_then(|provider_ids| provider_ids.tmdb)
+                        .and_then(|id| id.parse().ok())
+                    {
+                        tracing::debug!(
+                            lookup_source,
+                            lookup_id,
+                            tmdb_id,
+                            elapsed_ms = lookup_started.elapsed().as_millis(),
+                            "Jellyfin TMDB lookup matched"
+                        );
+                        return Some(tmdb_id);
+                    }
+                    tracing::debug!(
+                        lookup_source,
+                        lookup_id,
+                        elapsed_ms = lookup_started.elapsed().as_millis(),
+                        "Jellyfin item has no usable TMDB ID"
+                    );
+                }
+                Err(error) => tracing::debug!(
+                    lookup_source,
+                    lookup_id,
+                    %error,
+                    elapsed_ms = lookup_started.elapsed().as_millis(),
+                    "Jellyfin TMDB lookup failed"
+                ),
+            }
+        }
+        tracing::debug!(
+            item_id = item.id(),
+            elapsed_ms = resolve_started.elapsed().as_millis(),
+            "No Jellyfin TMDB ID resolved"
+        );
+        None
+    }
+
+    fn trace_danmaku_search(
+        strategy: &'static str, item_id: &str, generation: u64,
+        params: &SearchSearchEpisodesParams, elapsed: Duration,
+        result: &anyhow::Result<EpisodeSearchResult>, stale: bool,
+    ) {
+        match result {
+            Ok(result) => tracing::info!(
+                flow = "automatic",
+                strategy,
+                item_id,
+                generation,
+                anime = ?params.anime.as_deref(),
+                episode = ?params.episode.as_deref(),
+                tmdb_id = ?params.tmdb_id,
+                tmdb_id_type = params.tmdb_id_type,
+                anime_count = result.anime_count,
+                episode_count = result.episode_count,
+                matched = result.episode_match.is_some(),
+                stale,
+                elapsed_ms = elapsed.as_millis(),
+                "Danmaku episode search completed"
+            ),
+            Err(error) => tracing::warn!(
+                flow = "automatic",
+                strategy,
+                item_id,
+                generation,
+                anime = ?params.anime.as_deref(),
+                episode = ?params.episode.as_deref(),
+                tmdb_id = ?params.tmdb_id,
+                tmdb_id_type = params.tmdb_id_type,
+                %error,
+                stale,
+                elapsed_ms = elapsed.as_millis(),
+                "Danmaku episode search failed"
+            ),
+        }
+    }
+
+    fn trace_danmaku_load(
+        flow: &'static str, item_id: &str, generation: u64, episode_id: i64, elapsed: Duration,
+        result: &anyhow::Result<DanmakuLoadResult>, stale: bool,
+    ) {
+        match result {
+            Ok(result) => tracing::info!(
+                flow,
+                item_id,
+                generation,
+                episode_id,
+                raw_count = result.raw_count,
+                count = result.danmaku.len(),
+                fetch_elapsed_ms = result.fetch_elapsed.as_millis(),
+                convert_elapsed_ms = result.convert_elapsed.as_millis(),
+                elapsed_ms = elapsed.as_millis(),
+                stale,
+                "Danmaku comment request completed"
+            ),
+            Err(error) => tracing::warn!(
+                flow,
+                item_id,
+                generation,
+                episode_id,
+                %error,
+                elapsed_ms = elapsed.as_millis(),
+                stale,
+                "Danmaku comment loading failed"
+            ),
+        }
     }
 
     fn auto_search_danmaku(&self, client: DanmakuClient, item: &TuItem) {
@@ -620,10 +779,16 @@ impl MPVPage {
                         return;
                     }
                     if let Err(error) = obj
-                        .apply_manual_danmaku(client, cached.episode_id, cached.item_name)
+                        .apply_danmaku_episode(
+                            client,
+                            cached.episode_id,
+                            cached.item_name,
+                            true,
+                            "cached",
+                        )
                         .await
                     {
-                        tracing::warn!("Failed to apply cached danmaku: {error}");
+                        tracing::warn!(%error, "Failed to apply cached danmaku");
                     }
                 }
             ));
@@ -632,19 +797,10 @@ impl MPVPage {
 
         let generation = self.next_danmaku_generation();
         let item_id = item.id();
-        let is_episode = item.season_name().is_some() || item.series_name().is_some();
         let anime = Self::danmaku_search_title(item);
-        let episode = is_episode
-            .then(|| item.index_number())
-            .filter(|episode| *episode > 0)
-            .map(|episode| episode.to_string());
-        let params = SearchSearchEpisodesParams {
-            anime: Some(anime),
-            tmdb_id: None,
-            tmdb_id_type: if is_episode { 0 } else { 1 },
-            episode,
-            v2: true,
-        };
+        let episode = Self::danmaku_search_episode(item);
+        let tmdb_id_type = i32::from(item.item_type() == MOVIE);
+        let item = item.clone();
 
         self.clear_danmaku(DanmakuPopoverStatus::Searching);
 
@@ -652,26 +808,77 @@ impl MPVPage {
             #[weak(rename_to = obj)]
             self,
             async move {
+                let tmdb_id = obj.resolve_danmaku_tmdb_id(&item).await;
+                if !obj.is_current_danmaku_request(generation, &item_id) {
+                    return;
+                }
+
                 if !obj.is_current_danmaku_request(generation, &item_id) {
                     return;
                 }
 
                 let search_client = client.clone();
-                let search_result =
+                let params = Self::danmaku_search_params(
+                    anime.clone(),
+                    episode.clone(),
+                    tmdb_id,
+                    tmdb_id_type,
+                );
+                let search_started = Instant::now();
+                let trace_params = params.clone();
+                let mut search_result =
                     spawn_tokio(async move { search_client.search_episode(params).await }).await;
+                let stale = !obj.is_current_danmaku_request(generation, &item_id);
+                Self::trace_danmaku_search(
+                    if tmdb_id.is_some() { "tmdb" } else { "title" },
+                    &item_id,
+                    generation,
+                    &trace_params,
+                    search_started.elapsed(),
+                    &search_result,
+                    stale,
+                );
+
+                if matches!(
+                    &search_result,
+                    Ok(result) if result.episode_match.is_none()
+                ) && tmdb_id.is_some()
+                    && !stale
+                {
+                    let search_client = client.clone();
+                    let fallback_params =
+                        Self::danmaku_search_params(anime, episode, None, tmdb_id_type);
+                    let search_started = Instant::now();
+                    let trace_params = fallback_params.clone();
+                    search_result =
+                        spawn_tokio(
+                            async move { search_client.search_episode(fallback_params).await },
+                        )
+                        .await;
+                    Self::trace_danmaku_search(
+                        "title_fallback",
+                        &item_id,
+                        generation,
+                        &trace_params,
+                        search_started.elapsed(),
+                        &search_result,
+                        !obj.is_current_danmaku_request(generation, &item_id),
+                    );
+                }
 
                 if !obj.is_current_danmaku_request(generation, &item_id) {
                     return;
                 }
 
                 let (episode_id, item_name) = match search_result {
-                    Ok(Some(episode_match)) => episode_match,
-                    Ok(None) => {
-                        obj.clear_danmaku(DanmakuPopoverStatus::NoMatching);
-                        return;
-                    }
-                    Err(error) => {
-                        tracing::warn!("Failed to search danmaku episode: {error}");
+                    Ok(result) => match result.episode_match {
+                        Some(episode_match) => episode_match,
+                        None => {
+                            obj.clear_danmaku(DanmakuPopoverStatus::NoMatching);
+                            return;
+                        }
+                    },
+                    Err(_) => {
                         obj.clear_danmaku(DanmakuPopoverStatus::Unavailable);
                         return;
                     }
@@ -681,22 +888,32 @@ impl MPVPage {
                     .danmaku_popover_content
                     .set_status(DanmakuPopoverStatus::Loading);
 
+                let load_started = Instant::now();
                 let comments_result =
                     spawn_tokio(async move { client.get_comments(episode_id).await }).await;
+                let stale = !obj.is_current_danmaku_request(generation, &item_id);
+                Self::trace_danmaku_load(
+                    "automatic",
+                    &item_id,
+                    generation,
+                    episode_id,
+                    load_started.elapsed(),
+                    &comments_result,
+                    stale,
+                );
 
-                if !obj.is_current_danmaku_request(generation, &item_id) {
+                if stale {
                     return;
                 }
 
                 match comments_result {
-                    Ok(Some(danmaku)) if !danmaku.is_empty() => {
-                        obj.apply_danmaku(danmaku, item_name, false)
+                    Ok(result) if !result.danmaku.is_empty() => {
+                        obj.apply_danmaku(result.danmaku, item_name, false)
                     }
                     Ok(_) => {
                         obj.clear_danmaku(DanmakuPopoverStatus::NoMatching);
                     }
-                    Err(error) => {
-                        tracing::warn!("Failed to load danmaku comments: {error}");
+                    Err(_) => {
                         obj.clear_danmaku(DanmakuPopoverStatus::Unavailable);
                     }
                 }
@@ -742,6 +959,14 @@ impl MPVPage {
     pub async fn apply_manual_danmaku(
         &self, client: DanmakuClient, episode_id: i64, item_name: String,
     ) -> anyhow::Result<bool> {
+        self.apply_danmaku_episode(client, episode_id, item_name, true, "manual")
+            .await
+    }
+
+    async fn apply_danmaku_episode(
+        &self, client: DanmakuClient, episode_id: i64, item_name: String, manual: bool,
+        flow: &'static str,
+    ) -> anyhow::Result<bool> {
         let Some(current_item) = self.current_video() else {
             anyhow::bail!("No video is currently playing");
         };
@@ -749,16 +974,27 @@ impl MPVPage {
         let generation = self.next_danmaku_generation();
         self.clear_danmaku(DanmakuPopoverStatus::Loading);
 
+        let load_started = Instant::now();
         let comments_result =
             spawn_tokio(async move { client.get_comments(episode_id).await }).await;
+        let stale = !self.is_current_danmaku_request(generation, &item_id);
+        Self::trace_danmaku_load(
+            flow,
+            &item_id,
+            generation,
+            episode_id,
+            load_started.elapsed(),
+            &comments_result,
+            stale,
+        );
 
-        if !self.is_current_danmaku_request(generation, &item_id) {
+        if stale {
             anyhow::bail!("The current video changed while loading danmaku");
         }
 
         match comments_result {
-            Ok(Some(danmaku)) if !danmaku.is_empty() => {
-                self.apply_danmaku(danmaku, item_name, true);
+            Ok(result) if !result.danmaku.is_empty() => {
+                self.apply_danmaku(result.danmaku, item_name, manual);
                 Ok(true)
             }
             Ok(_) => {
@@ -2210,5 +2446,32 @@ mod tests {
             PlaybackCacheKey::new("item".into(), None, Some("1080p".into())),
             PlaybackCacheKey::new("item".into(), None, Some("4K".into()))
         );
+    }
+
+    #[test]
+    fn danmaku_search_prefers_tmdb_over_title() {
+        let params = MPVPage::danmaku_search_params(
+            "Fallback title".to_string(),
+            Some("3".to_string()),
+            Some(42),
+            0,
+        );
+
+        assert_eq!(params.anime, None);
+        assert_eq!(params.tmdb_id, Some(42));
+        assert_eq!(params.episode.as_deref(), Some("3"));
+    }
+
+    #[test]
+    fn danmaku_search_keeps_title_without_tmdb() {
+        let params = MPVPage::danmaku_search_params(
+            "Fallback title".to_string(),
+            Some("3".to_string()),
+            None,
+            0,
+        );
+
+        assert_eq!(params.anime.as_deref(), Some("Fallback title"));
+        assert_eq!(params.tmdb_id, None);
     }
 }
