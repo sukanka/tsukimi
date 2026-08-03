@@ -331,7 +331,11 @@ impl Settings {
 
     pub fn remove_account(&self, account: Account) -> Result<(), glib::BoolError> {
         let mut accounts = self.accounts();
+        let previous_len = accounts.len();
         accounts.retain(|a| a != &account);
+        if accounts.len() == previous_len {
+            return Err(glib::bool_error!("Account not found"));
+        }
         self.set_string(Self::ACCOUNTS, &accounts.to_string())
     }
 
@@ -339,12 +343,15 @@ impl Settings {
         &self, old_account: Account, new_account: Account,
     ) -> Result<(), glib::BoolError> {
         let mut accounts = self.accounts();
-        if accounts.contains(&new_account) {
-            return Ok(());
+        let Some(index) = accounts.iter().position(|a| a == &old_account) else {
+            return Err(glib::bool_error!("Account not found"));
+        };
+        if accounts.iter().enumerate().any(|(candidate, account)| {
+            candidate != index && account.servername == new_account.servername
+        }) {
+            return Err(glib::bool_error!("Server name already exists"));
         }
-        if let Some(index) = accounts.iter().position(|a| a == &old_account) {
-            accounts[index] = new_account;
-        }
+        accounts[index] = new_account;
         self.set_string(Self::ACCOUNTS, &accounts.to_string())
     }
 
