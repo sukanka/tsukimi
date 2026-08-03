@@ -181,7 +181,8 @@ pub mod imp {
         fn constructed(&self) {
             self.parent_constructed();
 
-            if DanmakuClient::instance().is_none() {
+            if let Err(error) = DanmakuClient::new() {
+                tracing::warn!(%error, "Failed to initialize danmaku client");
                 self.set_status(DanmakuPopoverStatus::SecretNotExist);
             }
         }
@@ -304,8 +305,13 @@ impl DanmakuPopover {
 
     #[template_callback]
     fn on_manual_search(&self) {
-        let Some(client) = DanmakuClient::instance() else {
-            return;
+        let client = match DanmakuClient::new() {
+            Ok(client) => client,
+            Err(error) => {
+                tracing::warn!(%error, "Failed to initialize danmaku client");
+                self.set_status(DanmakuPopoverStatus::SecretNotExist);
+                return;
+            }
         };
         let Some(page) = self.imp().page.upgrade() else {
             return;
