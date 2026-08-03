@@ -92,6 +92,7 @@ use crate::{
 };
 
 pub static JELLYFIN_CLIENT: Lazy<JellyfinClient> = Lazy::new(JellyfinClient::default);
+const ITEM_INFO_FIELDS: &str = "ProviderIds,ShareLevel";
 pub static DEVICE_ID: Lazy<String> = Lazy::new(|| {
     let uuid = SETTINGS.device_uuid();
     if uuid.is_empty() {
@@ -532,7 +533,7 @@ impl JellyfinClient {
     pub async fn get_item_info(&self, id: &str) -> Result<SimpleListItem> {
         let s = self.session();
         let path = format!("Users/{}/Items/{}", s.account.user_id, id);
-        let params = [("Fields", "ShareLevel")];
+        let params = [("Fields", ITEM_INFO_FIELDS)];
         self.request(&path, &params).await
     }
 
@@ -1621,6 +1622,15 @@ mod tests {
     #[test]
     fn rejects_invalid_server_port() {
         assert!(build_base_url("https://example.com", "invalid", None).is_err());
+    }
+
+    #[test]
+    fn item_info_explicitly_requests_provider_ids() {
+        assert!(
+            ITEM_INFO_FIELDS
+                .split(',')
+                .any(|field| field == "ProviderIds")
+        );
     }
 
     #[tokio::test]
