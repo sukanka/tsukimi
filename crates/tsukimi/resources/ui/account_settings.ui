@@ -466,6 +466,120 @@
         </child>
       </object>
     </child>
+    <child>
+      <object class="AdwPreferencesPage">
+        <property name="title" translatable="yes">Danmaku</property>
+        <property name="name">danmaku</property>
+        <property name="icon-name">media-view-subtitles-symbolic</property>
+        <child>
+          <object class="AdwPreferencesGroup">
+            <property name="title" translatable="yes">dandanplay Credentials</property>
+            <property name="description" translatable="yes">The encrypted built-in credential is used only with the official server. Custom servers are unsigned unless both custom fields are filled.</property>
+            <child>
+              <object class="AdwEntryRow" id="settings_danmaku_app_id_row">
+                <property name="title">App ID</property>
+              </object>
+            </child>
+            <child>
+              <object class="AdwPasswordEntryRow" id="settings_danmaku_app_secret_row">
+                <property name="title">App Secret</property>
+              </object>
+            </child>
+            <child>
+              <object class="AdwButtonRow">
+                <property name="title" translatable="yes">Apply Credentials</property>
+                <property name="start-icon-name">check-round-outline-symbolic</property>
+                <signal name="activated" handler="on_settings_danmaku_credentials_apply" swapped="yes"/>
+                <style>
+                  <class name="suggested-action"/>
+                </style>
+              </object>
+            </child>
+            <child>
+              <object class="AdwButtonRow">
+                <property name="title" translatable="yes">Use Built-in Credentials</property>
+                <property name="start-icon-name">edit-clear-all-symbolic</property>
+                <signal name="activated" handler="on_settings_danmaku_credentials_reset" swapped="yes"/>
+              </object>
+            </child>
+          </object>
+        </child>
+        <child>
+          <object class="AdwPreferencesGroup">
+            <property name="title" translatable="yes">Danmaku Servers</property>
+            <property name="description" translatable="yes">Custom servers must implement the dandanplay API.</property>
+            <child>
+              <object class="AdwComboRow" id="settings_danmaku_server_combo">
+                <property name="title" translatable="yes">Active Server</property>
+                <signal name="notify::selected" handler="on_settings_danmaku_server_combo_changed" swapped="yes"/>
+              </object>
+            </child>
+            <child>
+              <object class="AdwExpanderRow" id="settings_danmaku_server_edit_row">
+                <property name="title" translatable="yes">Edit Selected Custom Server</property>
+                <property name="visible">false</property>
+                <child>
+                  <object class="AdwEntryRow" id="settings_danmaku_server_name_row">
+                    <property name="title" translatable="yes">Name</property>
+                  </object>
+                </child>
+                <child>
+                  <object class="AdwEntryRow" id="settings_danmaku_server_url_row">
+                    <property name="title" translatable="yes">Base URL</property>
+                  </object>
+                </child>
+                <child>
+                  <object class="AdwButtonRow">
+                    <property name="title" translatable="yes">Update Server</property>
+                    <property name="start-icon-name">document-edit-symbolic</property>
+                    <signal name="activated" handler="on_settings_danmaku_server_update" swapped="yes"/>
+                    <style>
+                      <class name="suggested-action"/>
+                    </style>
+                  </object>
+                </child>
+              </object>
+            </child>
+            <child>
+              <object class="AdwExpanderRow">
+                <property name="title" translatable="yes">Add Custom Server</property>
+                <child>
+                  <object class="AdwEntryRow" id="settings_danmaku_server_add_name_row">
+                    <property name="title" translatable="yes">Name</property>
+                  </object>
+                </child>
+                <child>
+                  <object class="AdwEntryRow" id="settings_danmaku_server_add_url_row">
+                    <property name="title" translatable="yes">Base URL</property>
+                  </object>
+                </child>
+                <child>
+                  <object class="AdwButtonRow">
+                    <property name="title" translatable="yes">Add Server</property>
+                    <property name="start-icon-name">list-add-symbolic</property>
+                    <signal name="activated" handler="on_settings_danmaku_server_add" swapped="yes"/>
+                    <style>
+                      <class name="suggested-action"/>
+                    </style>
+                  </object>
+                </child>
+              </object>
+            </child>
+            <child>
+              <object class="AdwButtonRow" id="settings_danmaku_server_remove_row">
+                <property name="title" translatable="yes">Remove Selected Server</property>
+                <property name="visible">false</property>
+                <property name="start-icon-name">user-trash-symbolic</property>
+                <signal name="activated" handler="on_settings_danmaku_server_remove" swapped="yes"/>
+                <style>
+                  <class name="destructive-action"/>
+                </style>
+              </object>
+            </child>
+          </object>
+        </child>
+      </object>
+    </child>
   </template>
   <object class="AdwNavigationPage" id="preferred_version_subpage">
     <property name="title" translatable="yes">Preferred Version</property>
