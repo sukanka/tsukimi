@@ -106,6 +106,29 @@ pub struct FallbackContext {
     start_seconds: f64,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct PlaybackCacheKey {
+    item_id: String,
+    media_source_id: Option<String>,
+    video_index: Option<i64>,
+    subtitle_index: Option<i64>,
+    video_matcher: Option<String>,
+}
+
+impl PlaybackCacheKey {
+    fn new(
+        item_id: String, selected: Option<&SelectedVideoSubInfo>, video_matcher: Option<String>,
+    ) -> Self {
+        Self {
+            item_id,
+            media_source_id: selected.map(|selected| selected.media_source_id.clone()),
+            video_index: selected.map(|selected| selected.video_index),
+            subtitle_index: selected.map(|selected| selected.sub_index),
+            video_matcher,
+        }
+    }
+}
+
 #[derive(Clone, Copy)]
 enum MpvTrackKind {
     Audio,
@@ -273,6 +296,9 @@ mod imp {
         pub danmaku_count: Cell<usize>,
         pub danmaku_generation: Cell<u64>,
         pub file_loaded: Cell<bool>,
+        pub(super) cached_playback: RefCell<Option<super::PlaybackCacheKey>>,
+        pub(super) pending_playback: RefCell<Option<super::PlaybackCacheKey>>,
+        pub(super) play_generation: Cell<u64>,
     }
 
     #[glib::object_subclass]
@@ -723,8 +749,25 @@ impl MPVPage {
         imp.danmakw.stop_rendering();
         imp.danmakw.set_visible(false);
         imp.allow_fallback.set(false);
+        imp.pending_playback.take();
+        imp.cached_playback.take();
         imp.loading_box.set_visible(false);
         imp.spinner.set_visible(false);
+    }
+
+    fn begin_play_request(&self) -> u64 {
+        let generation = self.imp().play_generation.get().wrapping_add(1);
+        self.imp().play_generation.set(generation);
+        generation
+    }
+
+    fn request_is_current(&self, generation: u64) -> bool {
+        self.imp().play_generation.get() == generation
+    }
+
+    fn cancel_pending_playback(&self) {
+        self.begin_play_request();
+        self.imp().pending_playback.take();
     }
 
     fn is_loading_failed(value: &str) -> bool {
@@ -763,7 +806,6 @@ impl MPVPage {
         self.imp()
             .queued_playback_direct_mode
             .replace(Some(next_mode));
-        self.mpv().stop();
 
         spawn_g_timeout(glib::clone!(
             #[weak(rename_to = obj)]
@@ -834,6 +876,13 @@ impl MPVPage {
                 .replace(Some(video_matcher));
         }
 
+        let cache_key = PlaybackCacheKey::new(
+            id.clone(),
+            selected.as_ref(),
+            self.imp().video_version_matcher.borrow().clone(),
+        );
+        let generation = self.begin_play_request();
+
         let track_list_changed = self.mpris_track_list_changed(&episode_list);
 
         self.set_current_video(Some(item.clone()));
@@ -872,10 +921,42 @@ impl MPVPage {
 
         self.load_skippable_segments(id.to_owned());
 
+        if self.imp().cached_playback.borrow().as_ref() == Some(&cache_key) {
+            let imp = self.imp();
+            imp.file_loaded.set(true);
+            imp.allow_fallback.set(false);
+            imp.spinner.set_visible(false);
+            imp.loading_box.set_visible(false);
+            imp.video.resume_cached(start_seconds);
+
+            if imp.danmaku_popover_content.is_enabled() && self.has_danmaku() {
+                self.set_danmaku_enabled(true);
+            } else if !should_search_danmaku
+                && SETTINGS.mpv_danmaku_enabled()
+                && !self.has_danmaku()
+            {
+                imp.danmaku_popover_content.set_switch_sensitive(true);
+                self.auto_search_danmaku(&item);
+            }
+
+            self.notify_playing();
+            self.update_timeout();
+            self.handle_callback(BackType::Start);
+            return;
+        }
+
+        self.imp().cached_playback.take();
+        self.imp().pending_playback.replace(Some(cache_key));
+        self.imp().suburl.take();
+        self.imp().video.stop();
+
         spawn_g_timeout(glib::clone!(
             #[weak(rename_to = obj)]
             self,
             async move {
+                if !obj.request_is_current(generation) {
+                    return;
+                }
                 let imp = obj.imp();
                 imp.spinner.set_visible(true);
                 imp.loading_box.set_visible(true);
@@ -885,7 +966,7 @@ impl MPVPage {
                 let sub_stream_index = selected.as_ref().map(|s| s.sub_index);
                 let media_source_id = selected.as_ref().map(|s| s.media_source_id.clone());
                 let id_clone = id.to_owned();
-                let playback_info = match spawn_tokio(async move {
+                let playback_info = spawn_tokio(async move {
                     JELLYFIN_CLIENT
                         .get_playbackinfo(
                             &id_clone,
@@ -896,8 +977,11 @@ impl MPVPage {
                         )
                         .await
                 })
-                .await
-                {
+                .await;
+                if !obj.request_is_current(generation) {
+                    return;
+                }
+                let playback_info = match playback_info {
                     Ok(playback_info) => playback_info,
                     Err(e) => {
                         obj.mark_stream_failed();
@@ -943,8 +1027,6 @@ impl MPVPage {
                     start_tick: glib::real_time() as u64 * 10,
                 };
 
-                imp.back.replace(Some(back));
-
                 let media_stream =
                     if let Some(sub_stream_index) = selected.as_ref().map(|s| s.sub_index) {
                         media_source.media_streams.get(sub_stream_index as usize)
@@ -965,12 +1047,10 @@ impl MPVPage {
                             .and_then(|index| media_source.media_streams.get(index.0 as usize))
                     };
 
-                if let Some(slang) = selected.map(|s| s.sub_lang) {
-                    imp.video.set_slang(slang);
-                } else {
-                    imp.video
-                        .set_slang(SETTINGS.mpv_subtitle_preferred_lang_str());
-                }
+                let slang = selected
+                    .as_ref()
+                    .map(|selected| selected.sub_lang.clone())
+                    .unwrap_or_else(|| SETTINGS.mpv_subtitle_preferred_lang_str());
 
                 let sub_url = match media_stream {
                     Some(stream) if stream.is_external => match &stream.delivery_url {
@@ -989,10 +1069,15 @@ impl MPVPage {
                     },
                     _ => None,
                 };
+                if !obj.request_is_current(generation) {
+                    return;
+                }
 
-                imp.suburl.replace(sub_url);
-
-                let video_url = match media_source_stream_url(media_source).await {
+                let video_url = media_source_stream_url(media_source).await;
+                if !obj.request_is_current(generation) {
+                    return;
+                }
+                let video_url = match video_url {
                     Some(video_url) => video_url,
                     None => {
                         obj.mark_stream_failed();
@@ -1001,7 +1086,14 @@ impl MPVPage {
                         return;
                     }
                 };
+                let video_url = JELLYFIN_CLIENT.get_streaming_url(&video_url).await;
+                if !obj.request_is_current(generation) {
+                    return;
+                }
 
+                imp.back.replace(Some(back));
+                imp.video.set_slang(slang);
+                imp.suburl.replace(sub_url);
                 imp.video.play(&video_url, start_seconds);
             }
         ));
@@ -1446,6 +1538,11 @@ impl MPVPage {
 
     fn on_file_loaded(&self) {
         let imp = self.imp();
+        let Some(cache_key) = imp.pending_playback.take() else {
+            tracing::debug!("Ignoring file-loaded event without a pending playback request");
+            return;
+        };
+        imp.cached_playback.replace(Some(cache_key));
         imp.file_loaded.set(true);
 
         if imp.danmaku_popover_content.is_enabled() && self.has_danmaku() {
@@ -1700,8 +1797,12 @@ impl MPVPage {
         let current_video = self.current_video();
 
         let video = &self.imp().video;
-        video.player().pause(true);
-        video.stop();
+        self.cancel_pending_playback();
+        if self.imp().cached_playback.borrow().is_some() {
+            video.park_cached();
+        } else {
+            video.stop();
+        }
         let root = self.root();
         let window = root
             .and_downcast_ref::<crate::ui::widgets::window::Window>()
@@ -2010,4 +2111,54 @@ pub async fn media_source_stream_url(source: &MediaSource) -> Option<String> {
     }
 
     direct_stream_url(source).await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn selection(
+        media_source_id: &str, video_index: i64, subtitle_index: i64,
+    ) -> SelectedVideoSubInfo {
+        SelectedVideoSubInfo {
+            sub_lang: "eng".into(),
+            sub_index: subtitle_index,
+            video_index,
+            media_source_id: media_source_id.into(),
+        }
+    }
+
+    #[test]
+    fn playback_cache_key_includes_item_and_selected_streams() {
+        let first = selection("source-a", 0, 1);
+        let other_source = selection("source-b", 0, 1);
+        let other_video = selection("source-a", 1, 1);
+        let other_subtitle = selection("source-a", 0, 2);
+
+        let key = PlaybackCacheKey::new("item-a".into(), Some(&first), None);
+        assert_ne!(
+            key,
+            PlaybackCacheKey::new("item-b".into(), Some(&first), None)
+        );
+        assert_ne!(
+            key,
+            PlaybackCacheKey::new("item-a".into(), Some(&other_source), None)
+        );
+        assert_ne!(
+            key,
+            PlaybackCacheKey::new("item-a".into(), Some(&other_video), None)
+        );
+        assert_ne!(
+            key,
+            PlaybackCacheKey::new("item-a".into(), Some(&other_subtitle), None)
+        );
+    }
+
+    #[test]
+    fn playback_cache_key_includes_version_matcher() {
+        assert_ne!(
+            PlaybackCacheKey::new("item".into(), None, Some("1080p".into())),
+            PlaybackCacheKey::new("item".into(), None, Some("4K".into()))
+        );
+    }
 }
