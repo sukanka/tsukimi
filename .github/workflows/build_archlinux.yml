@@ -1,0 +1,77 @@
+name: Arch Linux
+
+on:
+  workflow_call:
+
+jobs:
+  build:
+    name: Build (amd64)
+    runs-on: ubuntu-latest
+    container:
+      image: archlinux:latest
+    defaults:
+      run:
+        shell: bash
+
+    steps:
+      - name: Install build tools
+        run: |
+          pacman-key --init
+          pacman -Sy --noconfirm archlinux-keyring
+          pacman -Syu --noconfirm
+          pacman -S --noconfirm --needed base-devel blueprint-compiler git sudo
+
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          submodules: true
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Prepare package metadata
+        run: |
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          base_version="$(sed -n 's/^version = "\([^"]*\)"/\1/p' Cargo.toml | head -n1)"
+          test -n "$base_version"
+          revision_count="$(git rev-list --count HEAD)"
+          git_hash="$(git rev-parse --short=7 HEAD)"
+          sed -i "s/^pkgver=.*/pkgver=${base_version}.r${revision_count}.g${git_hash}/" PKGBUILD
+          grep '^pkgver=' PKGBUILD
+
+      - name: Create source archive
+        run: |
+          tar --exclude=./target --exclude=./.git -czf /tmp/tsukimi-src.tar.gz --transform 's,^\.,tsukimi,' .
+          mv /tmp/tsukimi-src.tar.gz tsukimi-src.tar.gz
+
+      - name: Build package
+        env:
+          DANDANAPI_SECRET_KEY: ${{ secrets.DANDANAPI_SECRET_KEY }}
+        run: |
+          if [[ -z "$DANDANAPI_SECRET_KEY" ]]; then
+            unset DANDANAPI_SECRET_KEY
+          fi
+          useradd -m builder
+          echo "builder ALL=(ALL) NOPASSWD: ALL" > /etc/sudoers.d/builder
+          chmod 440 /etc/sudoers.d/builder
+          install -d -o builder -g builder /tmp/pkgbuild
+          cp PKGBUILD tsukimi-src.tar.gz /tmp/pkgbuild/
+          chown builder:builder /tmp/pkgbuild/PKGBUILD /tmp/pkgbuild/tsukimi-src.tar.gz
+          su -m builder -c "cd /tmp/pkgbuild && makepkg --noconfirm --syncdeps --cleanbuild --clean --holdver"
+          for package in /tmp/pkgbuild/tsukimi-git-*.pkg.tar.zst; do
+            filename="${package##*/}"
+            cp "$package" "$GITHUB_WORKSPACE/${filename//:/_}"
+          done
+
+      - name: Upload package
+        uses: actions/upload-artifact@v7
+        with:
+          name: tsukimi-amd64-archlinux-linux
+          path: tsukimi-git-[0-9]*.pkg.tar.zst
+          archive: false
+
+      - name: Upload debug package
+        uses: actions/upload-artifact@v7
+        with:
+          name: tsukimi-amd64-archlinux-debug-linux
+          path: tsukimi-git-debug-*.pkg.tar.zst
+          archive: false
