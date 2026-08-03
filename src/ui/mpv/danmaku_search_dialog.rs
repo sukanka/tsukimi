@@ -167,25 +167,91 @@ impl DanmakuSearchDialog {
         };
         let generation = self.next_search_generation();
         let tmdb_id_type = i32::from(item.item_type() == MOVIE);
+        let fallback_title = item
+            .series_name()
+            .filter(|title| !title.trim().is_empty())
+            .unwrap_or_else(|| item.name());
 
         spawn(glib::clone!(
             #[weak(rename_to = obj)]
             self,
             async move {
-                let Some(tmdb_id) = page.resolve_danmaku_tmdb_id(&item).await else {
-                    return;
-                };
+                let tmdb_id = page.resolve_danmaku_tmdb_id(&item).await;
                 if !obj.is_current_search(generation) {
                     return;
                 }
 
+                if let Some(tmdb_id) = tmdb_id {
+                    let search_started = Instant::now();
+                    let tmdb_result = spawn_tokio(async move {
+                        let client = DanmakuClient::new()?;
+                        client
+                            .search_animes(SearchSearchEpisodesParams {
+                                anime: None,
+                                tmdb_id: Some(tmdb_id),
+                                tmdb_id_type,
+                                episode: None,
+                                v2: true,
+                            })
+                            .await
+                    })
+                    .await;
+                    let stale = !obj.is_current_search(generation);
+                    match &tmdb_result {
+                        Ok(animes) => tracing::info!(
+                            flow = "manual_candidates",
+                            strategy = "tmdb",
+                            generation,
+                            tmdb_id,
+                            tmdb_id_type,
+                            anime_count = animes.len(),
+                            episode_count = animes
+                                .iter()
+                                .map(|anime| anime.episodes.as_ref().map_or(0, Vec::len))
+                                .sum::<usize>(),
+                            stale,
+                            elapsed_ms = search_started.elapsed().as_millis(),
+                            "Danmaku anime candidate search completed"
+                        ),
+                        Err(error) => tracing::warn!(
+                            flow = "manual_candidates",
+                            strategy = "tmdb",
+                            generation,
+                            tmdb_id,
+                            tmdb_id_type,
+                            %error,
+                            stale,
+                            elapsed_ms = search_started.elapsed().as_millis(),
+                            "Danmaku anime candidate search failed"
+                        ),
+                    }
+                    if stale {
+                        return;
+                    }
+
+                    if let Ok(animes) = tmdb_result
+                        && Self::has_usable_episode_candidates(&animes)
+                    {
+                        obj.set_anime_candidates(animes);
+                        return;
+                    }
+                } else {
+                    tracing::debug!(
+                        flow = "manual_candidates",
+                        strategy = "tmdb",
+                        generation,
+                        "No TMDB ID resolved; using the title fallback"
+                    );
+                }
+
+                let trace_title = fallback_title.clone();
                 let search_started = Instant::now();
                 let result = spawn_tokio(async move {
                     let client = DanmakuClient::new()?;
                     client
                         .search_animes(SearchSearchEpisodesParams {
-                            anime: None,
-                            tmdb_id: Some(tmdb_id),
+                            anime: Some(fallback_title),
+                            tmdb_id: None,
                             tmdb_id_type,
                             episode: None,
                             v2: true,
@@ -197,10 +263,9 @@ impl DanmakuSearchDialog {
                 match &result {
                     Ok(animes) => tracing::info!(
                         flow = "manual_candidates",
-                        strategy = "tmdb",
+                        strategy = "title_fallback",
                         generation,
-                        tmdb_id,
-                        tmdb_id_type,
+                        title = trace_title,
                         anime_count = animes.len(),
                         episode_count = animes
                             .iter()
@@ -208,18 +273,17 @@ impl DanmakuSearchDialog {
                             .sum::<usize>(),
                         stale,
                         elapsed_ms = search_started.elapsed().as_millis(),
-                        "Danmaku anime candidate search completed"
+                        "Danmaku anime candidate fallback search completed"
                     ),
                     Err(error) => tracing::warn!(
                         flow = "manual_candidates",
-                        strategy = "tmdb",
+                        strategy = "title_fallback",
                         generation,
-                        tmdb_id,
-                        tmdb_id_type,
+                        title = trace_title,
                         %error,
                         stale,
                         elapsed_ms = search_started.elapsed().as_millis(),
-                        "Danmaku anime candidate search failed"
+                        "Danmaku anime candidate fallback search failed"
                     ),
                 }
                 if stale {
@@ -233,16 +297,31 @@ impl DanmakuSearchDialog {
         ));
     }
 
+    fn has_usable_episode_candidates(animes: &[SearchEpisodesAnime]) -> bool {
+        animes.iter().any(|anime| {
+            anime
+                .episodes
+                .as_ref()
+                .is_some_and(|episodes| episodes.iter().any(|episode| episode.episode_id.is_some()))
+        })
+    }
+
     fn set_anime_candidates(&self, animes: Vec<SearchEpisodesAnime>) {
         let mut episodes = HashMap::new();
         let items = animes
             .into_iter()
             .map(|anime| {
                 if let Some(anime_id) = anime.anime_id {
-                    episodes.insert(
-                        anime_id.to_string(),
-                        anime.episodes.clone().unwrap_or_default(),
-                    );
+                    let valid_episodes = anime
+                        .episodes
+                        .clone()
+                        .unwrap_or_default()
+                        .into_iter()
+                        .filter(|episode| episode.episode_id.is_some())
+                        .collect::<Vec<_>>();
+                    if !valid_episodes.is_empty() {
+                        episodes.insert(anime_id.to_string(), valid_episodes);
+                    }
                 }
                 SimpleListItem::from(anime)
             })
@@ -544,6 +623,7 @@ impl DanmakuSearchDialog {
     ) -> Vec<SimpleListItem> {
         episodes
             .into_iter()
+            .filter(|episode| episode.episode_id.is_some())
             .enumerate()
             .map(|(index, episode)| {
                 let mut item = SimpleListItem::from(episode);
@@ -552,5 +632,44 @@ impl DanmakuSearchDialog {
                 item
             })
             .collect()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn candidate_search_requires_a_usable_episode_id() {
+        let empty = serde_json::from_value::<Vec<SearchEpisodesAnime>>(serde_json::json!([{
+            "animeId": 1,
+            "animeTitle": "Empty",
+            "episodes": [{ "episodeId": null, "episodeTitle": "Unknown" }]
+        }]))
+        .expect("empty candidate response");
+        let usable = serde_json::from_value::<Vec<SearchEpisodesAnime>>(serde_json::json!([{
+            "animeId": 2,
+            "animeTitle": "Usable",
+            "episodes": [{ "episodeId": 21, "episodeTitle": "Episode 1" }]
+        }]))
+        .expect("usable candidate response");
+
+        assert!(!DanmakuSearchDialog::has_usable_episode_candidates(&empty));
+        assert!(DanmakuSearchDialog::has_usable_episode_candidates(&usable));
+    }
+
+    #[test]
+    fn episode_items_drop_entries_without_an_id() {
+        let episodes = serde_json::from_value::<Vec<SearchEpisodeDetails>>(serde_json::json!([
+            { "episodeId": null, "episodeTitle": "Unknown" },
+            { "episodeId": 21, "episodeTitle": "Episode 1" }
+        ]))
+        .expect("episode response");
+
+        let items = DanmakuSearchDialog::episode_items(episodes, "Series");
+
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].id, "21");
+        assert_eq!(items[0].index_number, Some(1));
     }
 }

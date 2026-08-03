@@ -852,6 +852,17 @@ impl MPVPage {
         }
     }
 
+    fn should_fallback_danmaku_title(
+        tmdb_id: Option<i32>, result: &anyhow::Result<EpisodeSearchResult>, stale: bool,
+    ) -> bool {
+        tmdb_id.is_some()
+            && !stale
+            && match result {
+                Ok(result) => result.episode_match.is_none(),
+                Err(_) => true,
+            }
+    }
+
     fn trace_danmaku_load(
         flow: &'static str, item_id: &str, generation: u64, episode_id: i64, elapsed: Duration,
         result: &anyhow::Result<DanmakuLoadResult>, stale: bool,
@@ -965,12 +976,7 @@ impl MPVPage {
                     stale,
                 );
 
-                if matches!(
-                    &search_result,
-                    Ok(result) if result.episode_match.is_none()
-                ) && tmdb_id.is_some()
-                    && !stale
-                {
+                if Self::should_fallback_danmaku_title(tmdb_id, &search_result, stale) {
                     let search_client = client.clone();
                     let fallback_params =
                         Self::danmaku_search_params(anime, episode, None, tmdb_id_type);
@@ -2881,5 +2887,44 @@ mod tests {
 
         assert_eq!(params.anime.as_deref(), Some("Fallback title"));
         assert_eq!(params.tmdb_id, None);
+    }
+
+    #[test]
+    fn danmaku_search_falls_back_after_tmdb_errors_or_empty_results() {
+        let empty = Ok(EpisodeSearchResult {
+            episode_match: None,
+            anime_count: 0,
+            episode_count: 0,
+        });
+        let matched = Ok(EpisodeSearchResult {
+            episode_match: Some((1, "Episode 1".to_string())),
+            anime_count: 1,
+            episode_count: 1,
+        });
+        let failed = Err(anyhow::anyhow!("TMDB request failed"));
+
+        assert!(MPVPage::should_fallback_danmaku_title(
+            Some(42),
+            &empty,
+            false
+        ));
+        assert!(MPVPage::should_fallback_danmaku_title(
+            Some(42),
+            &failed,
+            false
+        ));
+        assert!(!MPVPage::should_fallback_danmaku_title(
+            Some(42),
+            &matched,
+            false
+        ));
+        assert!(!MPVPage::should_fallback_danmaku_title(
+            Some(42),
+            &failed,
+            true
+        ));
+        assert!(!MPVPage::should_fallback_danmaku_title(
+            None, &failed, false
+        ));
     }
 }
