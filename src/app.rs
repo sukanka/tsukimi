@@ -20,6 +20,7 @@ mod imp {
     use url::Url;
 
     use crate::ui::{
+        DanmakuClient,
         SETTINGS,
         match_audio_channels,
         match_hwdec_interop,
@@ -65,6 +66,16 @@ mod imp {
                     move |_, _| obj.imp().update_accent_provider()
                 ),
             );
+
+            configure_danmaku_client();
+            for key in [
+                "danmaku-appid",
+                "danmaku-appsecret",
+                "danmaku-servers",
+                "danmaku-active-server",
+            ] {
+                SETTINGS.connect_changed(Some(key), move |_, _| configure_danmaku_client());
+            }
 
             configure_mpv();
 
@@ -139,6 +150,21 @@ mod imp {
                 );
                 self.accent_provider_added.set(true);
             }
+        }
+    }
+
+    fn configure_danmaku_client() {
+        let servers = SETTINGS.danmaku_servers();
+        let base_url = usize::try_from(SETTINGS.danmaku_active_server())
+            .ok()
+            .and_then(|index| servers.get(index))
+            .map(|server| server.url.as_str());
+        if let Err(error) = DanmakuClient::configure(
+            &SETTINGS.danmaku_app_id(),
+            &SETTINGS.danmaku_app_secret(),
+            base_url,
+        ) {
+            tracing::warn!("Ignoring invalid danmaku source configuration: {error}");
         }
     }
 
