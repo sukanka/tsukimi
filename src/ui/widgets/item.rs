@@ -203,6 +203,8 @@ pub(crate) mod imp {
 
         #[template_child]
         pub episode_switcher: TemplateChild<EpisodeSwitcher>,
+        #[template_child]
+        pub route_switch_button: TemplateChild<gtk::MenuButton>,
 
         pub show_left_animation: OnceCell<adw::TimedAnimation>,
         pub hide_left_animation: OnceCell<adw::TimedAnimation>,
@@ -257,6 +259,9 @@ pub(crate) mod imp {
             namedropdown.set_list_factory(Some(&factory::<false>()));
             subdropdown.set_factory(Some(&factory::<true>()));
             subdropdown.set_list_factory(Some(&factory::<false>()));
+            crate::ui::widgets::route_switcher::setup_route_switch_button(
+                &self.route_switch_button,
+            );
 
             let store = gtk::gio::ListStore::new::<TuObject>();
             self.selection.set_model(Some(&store));

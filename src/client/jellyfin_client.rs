@@ -3,6 +3,10 @@ use std::{
     collections::HashMap,
     future,
     hash::Hasher,
+    sync::atomic::{
+        AtomicU64,
+        Ordering,
+    },
     time::Duration,
 };
 
@@ -149,6 +153,7 @@ impl Session {
 
 pub struct JellyfinClient {
     pub session: ArcSwap<Session>,
+    session_generation: AtomicU64,
     pub semaphore: tokio::sync::Semaphore,
     pub client: Client,
     next_up_date_cache: Cache<NextUpDateKey, Option<DateTime<Utc>>>,
@@ -174,10 +179,38 @@ fn generate_hash(s: &str) -> String {
     format!("{:x}", hasher.finish())
 }
 
+fn next_session_generation(generation: &AtomicU64) -> u64 {
+    generation.fetch_add(1, Ordering::AcqRel).wrapping_add(1)
+}
+
+fn is_current_session_generation(generation: &AtomicU64, expected: u64) -> bool {
+    generation.load(Ordering::Acquire) == expected
+}
+
+fn build_base_url(url_str: &str, port: &str, path: Option<&str>) -> Result<Url> {
+    let mut url = Url::parse(url_str)?;
+    let port = port
+        .parse::<u16>()
+        .with_context(|| format!("Invalid server port: {port}"))?;
+    url.set_port(Some(port))
+        .map_err(|_| anyhow!("Failed to set port"))?;
+
+    let path = path
+        .map(str::trim)
+        .map(|path| path.trim_matches('/'))
+        .filter(|path| !path.is_empty());
+    let api_path = path
+        .map(|path| format!("{path}/emby/"))
+        .unwrap_or_else(|| "emby/".to_string());
+
+    Ok(url.join(&api_path)?)
+}
+
 impl Default for JellyfinClient {
     fn default() -> Self {
         Self {
             session: ArcSwap::from_pointee(Session::empty()),
+            session_generation: AtomicU64::new(0),
             semaphore: tokio::sync::Semaphore::new(SETTINGS.threads() as usize),
             client: ReqClient::build(),
             next_up_date_cache: Cache::builder()
@@ -203,12 +236,14 @@ impl JellyfinClient {
     }
 
     pub async fn init(&self, account: &Account) -> Result<(), Box<dyn std::error::Error>> {
-        let url = {
-            let mut url = Url::parse(&account.server)?;
-            url.set_port(Some(account.port.parse::<u16>().unwrap_or_default()))
-                .map_err(|_| anyhow!("Failed to set port"))?;
-            url.join("emby/")?
-        };
+        self.init_with_generation(account).await.map(|_| ())
+    }
+
+    pub(crate) async fn init_with_generation(
+        &self, account: &Account,
+    ) -> Result<u64, Box<dyn std::error::Error>> {
+        let (server, port, path) = account.active_endpoint();
+        let url = build_base_url(server, port, path)?;
 
         let mut headers = reqwest::header::HeaderMap::new();
         headers.insert("Accept-Encoding", HeaderValue::from_static("gzip"));
@@ -227,6 +262,7 @@ impl JellyfinClient {
             ))?,
         );
 
+        let generation = next_session_generation(&self.session_generation);
         self.session.store(Arc::new(Session {
             account: account.clone(),
             url: Some(url),
@@ -239,21 +275,35 @@ impl JellyfinClient {
         spawn_tokio_without_await(async move {
             match JELLYFIN_CLIENT.authenticate_admin().await {
                 Ok(r) => {
-                    if r.policy.is_administrator {
-                        crate::ui::provider::set_admin(true);
+                    if JELLYFIN_CLIENT.is_session_generation_current(generation) {
+                        crate::ui::provider::set_admin(r.policy.is_administrator);
                     }
                 }
                 Err(e) => warn!("Failed to authenticate as admin: {}", e),
             }
         });
-        Ok(())
+        Ok(generation)
     }
 
-    pub fn header_change_url(&self, url_str: &str, port: &str) -> Result<()> {
-        let mut url = Url::parse(url_str)?;
-        url.set_port(Some(port.parse::<u16>().unwrap_or_default()))
-            .map_err(|_| anyhow!("Failed to set port"))?;
-        let url = url.join("emby/")?;
+    pub(crate) fn is_session_generation_current(&self, expected: u64) -> bool {
+        is_current_session_generation(&self.session_generation, expected)
+    }
+
+    pub(crate) async fn authenticate_admin_for_generation(
+        &self, generation: u64,
+    ) -> Result<AuthenticateResponse> {
+        if !self.is_session_generation_current(generation) {
+            bail!("Session changed before authentication");
+        }
+        let response = self.authenticate_admin().await?;
+        if !self.is_session_generation_current(generation) {
+            bail!("Session changed during authentication");
+        }
+        Ok(response)
+    }
+
+    pub fn header_change_url(&self, url_str: &str, port: &str, path: Option<&str>) -> Result<()> {
+        let url = build_base_url(url_str, port, path)?;
         self.session.rcu(|current| {
             let mut session = (**current).clone();
             session.url = Some(url.clone());
@@ -1537,6 +1587,23 @@ impl JellyfinClient {
 }
 
 #[cfg(test)]
+mod session_generation_tests {
+    use super::*;
+
+    #[test]
+    fn stale_admin_result_is_rejected_after_session_changes() {
+        let generation = AtomicU64::new(0);
+        let account_a_first = next_session_generation(&generation);
+        let account_b = next_session_generation(&generation);
+        let account_a_second = next_session_generation(&generation);
+
+        assert!(!is_current_session_generation(&generation, account_a_first));
+        assert!(!is_current_session_generation(&generation, account_b));
+        assert!(is_current_session_generation(&generation, account_a_second));
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use crate::client::{
@@ -1544,9 +1611,21 @@ mod tests {
         error::UserFacingError,
     };
 
+    #[test]
+    fn builds_base_url_with_normalized_path() {
+        let url = build_base_url("https://example.com", "443", Some("/jellyfin/")).unwrap();
+
+        assert_eq!(url.as_str(), "https://example.com/jellyfin/emby/");
+    }
+
+    #[test]
+    fn rejects_invalid_server_port() {
+        assert!(build_base_url("https://example.com", "invalid", None).is_err());
+    }
+
     #[tokio::test]
     async fn search() {
-        let _ = JELLYFIN_CLIENT.header_change_url("https://example.com", "443");
+        let _ = JELLYFIN_CLIENT.header_change_url("https://example.com", "443", None);
         let result = JELLYFIN_CLIENT.login("test", "test").await;
         match result {
             Ok(response) => {
@@ -1560,6 +1639,7 @@ mod tests {
                     user_id: response.user.id,
                     access_token: response.access_token,
                     server_type: Some(ServerType::Jellyfin),
+                    ..Default::default()
                 };
                 let _ = JELLYFIN_CLIENT.init(&account).await;
             }
@@ -1595,7 +1675,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_upload_image() {
-        let _ = JELLYFIN_CLIENT.header_change_url("http://127.0.0.1", "8096");
+        let _ = JELLYFIN_CLIENT.header_change_url("http://127.0.0.1", "8096", None);
         let result = JELLYFIN_CLIENT.login("inaha", "").await;
         match result {
             Ok(response) => {
@@ -1609,6 +1689,7 @@ mod tests {
                     user_id: response.user.id,
                     access_token: response.access_token,
                     server_type: Some(ServerType::Jellyfin),
+                    ..Default::default()
                 };
                 let _ = JELLYFIN_CLIENT.init(&account).await;
             }
