@@ -11,7 +11,10 @@ use gtk::{
 
 use crate::{
     APP_ID,
-    client::Account,
+    client::{
+        Account,
+        DanmakuServer,
+    },
     ui::provider::descriptor::{
         Descriptor,
         VecSerialize,
@@ -88,6 +91,10 @@ impl Settings {
     const KEY_MPV_DANMAKU_OUTLINE_SIZE: &'static str = "mpv-danmaku-outline-size";
     const KEY_MPV_DANMAKU_SHADOW_OFFSET: &'static str = "mpv-danmaku-shadow-offset";
     const KEY_DANMAKU_CACHE_MAP: &'static str = "danmaku-cache-map";
+    const KEY_DANMAKU_APP_ID: &'static str = "danmaku-appid";
+    const KEY_DANMAKU_APP_SECRET: &'static str = "danmaku-appsecret";
+    const KEY_DANMAKU_SERVERS: &'static str = "danmaku-servers";
+    const KEY_DANMAKU_ACTIVE_SERVER: &'static str = "danmaku-active-server";
 
     fn bind_setting(&self, key: &str, object: &impl IsA<glib::Object>, property: &str) {
         self.0.get_ref().bind(key, object, property).build();
@@ -139,6 +146,39 @@ impl Settings {
 
     pub fn set_danmaku_cache_map(&self, value: &str) -> Result<(), glib::BoolError> {
         self.set_string(Self::KEY_DANMAKU_CACHE_MAP, value)
+    }
+
+    pub fn danmaku_app_id(&self) -> String {
+        self.string(Self::KEY_DANMAKU_APP_ID).to_string()
+    }
+
+    pub fn set_danmaku_app_id(&self, app_id: &str) -> Result<(), glib::BoolError> {
+        self.set_string(Self::KEY_DANMAKU_APP_ID, app_id)
+    }
+
+    pub fn danmaku_app_secret(&self) -> String {
+        self.string(Self::KEY_DANMAKU_APP_SECRET).to_string()
+    }
+
+    pub fn set_danmaku_app_secret(&self, app_secret: &str) -> Result<(), glib::BoolError> {
+        self.set_string(Self::KEY_DANMAKU_APP_SECRET, app_secret)
+    }
+
+    pub fn danmaku_servers(&self) -> Vec<DanmakuServer> {
+        serde_json::from_str(self.string(Self::KEY_DANMAKU_SERVERS).as_ref()).unwrap_or_default()
+    }
+
+    pub fn set_danmaku_servers(&self, servers: &[DanmakuServer]) -> Result<(), glib::BoolError> {
+        let servers = serde_json::to_string(servers).expect("Danmaku servers are serializable");
+        self.set_string(Self::KEY_DANMAKU_SERVERS, &servers)
+    }
+
+    pub fn danmaku_active_server(&self) -> i32 {
+        self.int(Self::KEY_DANMAKU_ACTIVE_SERVER)
+    }
+
+    pub fn set_danmaku_active_server(&self, active: i32) -> Result<(), glib::BoolError> {
+        self.set_int(Self::KEY_DANMAKU_ACTIVE_SERVER, active)
     }
 
     pub fn is_overlay(&self) -> bool {
