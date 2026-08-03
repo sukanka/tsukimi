@@ -30,6 +30,7 @@
                         </child>
                         <child>
                           <object class="AdwActionRow" id="danmaku_status_row">
+                            <property name="use-markup">False</property>
                             <property name="subtitle" translatable="yes">Danmaku disabled</property>
                             <property name="subtitle-lines">2</property>
                             <property name="subtitle-selectable">True</property>
