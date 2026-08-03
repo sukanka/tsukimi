@@ -1,6 +1,9 @@
 use std::cell::Cell;
 
-use crate::client::jellyfin_client::JELLYFIN_CLIENT;
+use crate::{
+    client::jellyfin_client::JELLYFIN_CLIENT,
+    ui::models::SETTINGS,
+};
 
 use adw::{
     prelude::*,
@@ -18,7 +21,6 @@ use mutsumi::{
     TrackKind,
     TrackSelection,
 };
-use tracing::info;
 
 mod imp {
     use super::*;
@@ -95,14 +97,34 @@ impl MPVPlaySink {
         let url = JELLYFIN_CLIENT.resolve_url(url);
 
         let (imp, player) = (self.imp(), self.player());
-        info!("Now Playing: {}", url);
+        tracing::info!("Now Playing: {url}");
 
         imp.position.set(start_seconds);
         imp.paused.set(false);
+        self.resume_cache_fill();
 
         player.set_start(start_seconds);
         player.load_video(&url);
         player.pause(false);
+    }
+
+    pub fn resume_cached(&self, start_seconds: f64) {
+        self.imp().position.set(start_seconds);
+        self.imp().paused.set(false);
+        self.resume_cache_fill();
+        self.player().set_position(start_seconds);
+        self.player().pause(false);
+    }
+
+    pub fn park_cached(&self) {
+        self.imp().paused.set(true);
+        self.player().pause(true);
+        self.player().set_cache_secs(0.0);
+    }
+
+    fn resume_cache_fill(&self) {
+        self.player()
+            .set_cache_secs(SETTINGS.mpv_cache_time() as f64);
     }
 
     pub fn add_sub(&self, url: &str) {
