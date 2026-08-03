@@ -24,6 +24,7 @@ pub enum DanmakuPopoverStatus {
     Loading,
     NoMatching,
     ManualLoaded(usize, String),
+    ExternalLoaded(usize, String),
     SecretNotExist,
     #[default]
     Disabled,
@@ -33,7 +34,9 @@ pub enum DanmakuPopoverStatus {
 impl DanmakuPopoverStatus {
     pub fn title(&self) -> String {
         match self {
-            DanmakuPopoverStatus::Loaded(i, _) | DanmakuPopoverStatus::ManualLoaded(i, _) => {
+            DanmakuPopoverStatus::Loaded(i, _)
+            | DanmakuPopoverStatus::ManualLoaded(i, _)
+            | DanmakuPopoverStatus::ExternalLoaded(i, _) => {
                 gettext("{count} Danmaku Loaded").replace("{count}", &i.to_string())
             }
             _ => gettext("Danmaku"),
@@ -45,7 +48,8 @@ impl DanmakuPopoverStatus {
             DanmakuPopoverStatus::Searching => gettext("Searching"),
             DanmakuPopoverStatus::Loading => gettext("Loading"),
             DanmakuPopoverStatus::Loaded(_, item_name)
-            | DanmakuPopoverStatus::ManualLoaded(_, item_name) => item_name.clone(),
+            | DanmakuPopoverStatus::ManualLoaded(_, item_name)
+            | DanmakuPopoverStatus::ExternalLoaded(_, item_name) => item_name.clone(),
             DanmakuPopoverStatus::NoMatching => gettext("No danmaku found"),
             DanmakuPopoverStatus::SecretNotExist => gettext("This feature needs a official build"),
             DanmakuPopoverStatus::Disabled => gettext("Disabled"),
@@ -59,6 +63,7 @@ impl DanmakuPopoverStatus {
             DanmakuPopoverStatus::ManualLoaded(..) => {
                 gettext("From 弹弹play开放弹幕网络 (Manually Matched)")
             }
+            DanmakuPopoverStatus::ExternalLoaded(..) => gettext("From external danmaku track"),
             _ => String::new(),
         }
     }
@@ -67,9 +72,9 @@ impl DanmakuPopoverStatus {
         match self {
             DanmakuPopoverStatus::Searching => "",
             DanmakuPopoverStatus::Loading => "",
-            DanmakuPopoverStatus::Loaded(..) | DanmakuPopoverStatus::ManualLoaded(..) => {
-                "check-round-outline-symbolic"
-            }
+            DanmakuPopoverStatus::Loaded(..)
+            | DanmakuPopoverStatus::ManualLoaded(..)
+            | DanmakuPopoverStatus::ExternalLoaded(..) => "check-round-outline-symbolic",
             DanmakuPopoverStatus::NoMatching | DanmakuPopoverStatus::Disabled => {
                 "minus-circle-outline-symbolic"
             }
@@ -91,6 +96,7 @@ impl DanmakuPopoverStatus {
             DanmakuPopoverStatus::Loading => &["blink"],
             DanmakuPopoverStatus::Loaded(..) => &["success"],
             DanmakuPopoverStatus::ManualLoaded(..) => &["success"],
+            DanmakuPopoverStatus::ExternalLoaded(..) => &["success"],
             DanmakuPopoverStatus::NoMatching => &["warning"],
             DanmakuPopoverStatus::SecretNotExist => &["error"],
             DanmakuPopoverStatus::Disabled | DanmakuPopoverStatus::Unavailable => &[],
