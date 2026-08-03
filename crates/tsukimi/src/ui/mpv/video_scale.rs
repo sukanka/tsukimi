@@ -222,7 +222,6 @@ impl VideoScale {
     pub fn reset_scale(&self) {
         self.set_value(0.0);
         self.set_fill_level(0.0);
-        self.set_danmaku_timeline(Vec::new());
     }
 
     pub fn is_dragging(&self) -> bool {
