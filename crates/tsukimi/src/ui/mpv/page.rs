@@ -1,6 +1,9 @@
-use std::time::{
-    Duration,
-    Instant,
+use std::{
+    collections::VecDeque,
+    time::{
+        Duration,
+        Instant,
+    },
 };
 
 use adw::prelude::*;
@@ -115,8 +118,42 @@ async fn fetch_danmaku_track(url: &str) -> anyhow::Result<Vec<Danmaku>> {
     })
     .await
 }
+
+fn external_source_for_log(source: &str) -> String {
+    let Ok(mut source) = url::Url::parse(source) else {
+        return "<invalid external source>".into();
+    };
+    source.set_query(None);
+    source.set_fragment(None);
+    let _ = source.set_password(None);
+    let _ = source.set_username("");
+    source.to_string()
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct PlaybackCacheScope {
+    account_name: String,
+    user_id: String,
+    endpoint: Option<String>,
+}
+
+impl PlaybackCacheScope {
+    fn current() -> Self {
+        let session = JELLYFIN_CLIENT.session();
+        Self {
+            account_name: session.account.servername.clone(),
+            user_id: session.account.user_id.clone(),
+            endpoint: session
+                .url_headers
+                .as_ref()
+                .map(|(url, _headers)| url.to_string()),
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct PlaybackCacheKey {
+    scope: PlaybackCacheScope,
     item_id: String,
     media_source_id: Option<String>,
     video_index: Option<i64>,
@@ -126,15 +163,88 @@ struct PlaybackCacheKey {
 
 impl PlaybackCacheKey {
     fn new(
-        item_id: String, selected: Option<&SelectedVideoSubInfo>, video_matcher: Option<String>,
+        scope: PlaybackCacheScope, item_id: String, selected: Option<&SelectedVideoSubInfo>,
+        video_matcher: Option<String>,
     ) -> Self {
         Self {
+            scope,
             item_id,
             media_source_id: selected.map(|selected| selected.media_source_id.clone()),
             video_index: selected.map(|selected| selected.video_index),
             subtitle_index: selected.map(|selected| selected.sub_index),
             video_matcher,
         }
+    }
+}
+
+fn should_refresh_danmaku(
+    item_changed: bool, cached: Option<&PlaybackCacheKey>, requested: &PlaybackCacheKey,
+) -> bool {
+    item_changed || cached.is_some_and(|cached| cached != requested)
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct PlaybackRequest {
+    generation: u64,
+    cache_key: PlaybackCacheKey,
+}
+
+#[derive(Default)]
+struct PlaybackLoadState {
+    issued: VecDeque<PlaybackRequest>,
+    active: Option<PlaybackRequest>,
+}
+
+impl PlaybackLoadState {
+    fn issued(&mut self, request: PlaybackRequest) {
+        self.issued.push_back(request);
+    }
+
+    fn start_file(&mut self) -> Option<&PlaybackRequest> {
+        if let Some(request) = self.issued.pop_front() {
+            self.active = Some(request);
+        }
+        self.active.as_ref()
+    }
+
+    fn file_loaded(&self, current_generation: u64) -> Option<&PlaybackCacheKey> {
+        self.active
+            .as_ref()
+            .filter(|request| request.generation == current_generation)
+            .map(|request| &request.cache_key)
+    }
+
+    fn resume_cached(&mut self, request: PlaybackRequest) {
+        self.active = Some(request);
+    }
+
+    fn take_active(&mut self) -> Option<PlaybackRequest> {
+        self.active.take()
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct ManualDanmakuTransaction {
+    external_source: Option<String>,
+    had_rendered_danmaku: bool,
+}
+
+impl ManualDanmakuTransaction {
+    fn new(external_source: Option<String>, had_rendered_danmaku: bool) -> Self {
+        Self {
+            external_source,
+            had_rendered_danmaku,
+        }
+    }
+
+    fn preserve_renderer(&self) -> bool {
+        self.had_rendered_danmaku
+    }
+
+    fn external_source_to_restore(&self) -> Option<&str> {
+        (!self.had_rendered_danmaku)
+            .then_some(self.external_source.as_deref())
+            .flatten()
     }
 }
 
@@ -310,7 +420,7 @@ mod imp {
         pub external_danmaku_source: RefCell<Option<String>>,
         pub file_loaded: Cell<bool>,
         pub(super) cached_playback: RefCell<Option<super::PlaybackCacheKey>>,
-        pub(super) pending_playback: RefCell<Option<super::PlaybackCacheKey>>,
+        pub(super) playback_loads: RefCell<super::PlaybackLoadState>,
         pub(super) play_generation: Cell<u64>,
     }
 
@@ -531,6 +641,7 @@ impl MPVPage {
         }
 
         let source = source.expect("external danmaku source is present");
+        let source_for_log = external_source_for_log(&source);
         let imp = self.imp();
         imp.danmaku_count.set(0);
         imp.danmakw.stop_rendering();
@@ -557,20 +668,22 @@ impl MPVPage {
                         let count = danmaku.len();
                         obj.apply_external_danmaku(danmaku);
                         tracing::info!(
-                            %source,
+                            source = %source_for_log,
                             count,
                             elapsed_ms = started.elapsed().as_millis(),
                             "External danmaku track loaded"
                         );
                     }
                     Ok(_) => {
-                        tracing::warn!(%source, "External danmaku track was empty");
+                        tracing::warn!(
+                            source = %source_for_log,
+                            "External danmaku track was empty"
+                        );
                         obj.fallback_from_external_danmaku();
                     }
-                    Err(error) => {
+                    Err(_) => {
                         tracing::warn!(
-                            %source,
-                            %error,
+                            source = %source_for_log,
                             elapsed_ms = started.elapsed().as_millis(),
                             "External danmaku track failed to load"
                         );
@@ -967,8 +1080,14 @@ impl MPVPage {
             anyhow::bail!("No video is currently playing");
         };
         let item_id = current_item.id();
+        let transaction = ManualDanmakuTransaction::new(
+            self.imp().external_danmaku_source.borrow().clone(),
+            self.has_danmaku(),
+        );
         let generation = self.next_danmaku_generation();
-        self.clear_danmaku(DanmakuPopoverStatus::Loading);
+        if !transaction.preserve_renderer() {
+            self.clear_danmaku(DanmakuPopoverStatus::Loading);
+        }
 
         let load_started = Instant::now();
         let comments_result =
@@ -994,14 +1113,40 @@ impl MPVPage {
                 Ok(true)
             }
             Ok(_) => {
-                self.clear_danmaku(DanmakuPopoverStatus::NoMatching);
+                self.restore_danmaku_after_manual_failure(
+                    &transaction,
+                    DanmakuPopoverStatus::NoMatching,
+                );
                 Ok(false)
             }
             Err(error) => {
-                self.clear_danmaku(DanmakuPopoverStatus::Unavailable);
+                self.restore_danmaku_after_manual_failure(
+                    &transaction,
+                    DanmakuPopoverStatus::Unavailable,
+                );
                 Err(error)
             }
         }
+    }
+
+    fn restore_danmaku_after_manual_failure(
+        &self, transaction: &ManualDanmakuTransaction, fallback_status: DanmakuPopoverStatus,
+    ) {
+        if transaction.preserve_renderer() {
+            return;
+        }
+
+        if let Some(source) = transaction.external_source_to_restore()
+            && self.imp().external_danmaku_source.borrow().as_deref() == Some(source)
+        {
+            self.imp().external_danmaku_source.take();
+            self.load_external_danmaku_track(Some(DanmakuTrack {
+                external_url: source.to_owned(),
+            }));
+            return;
+        }
+
+        self.clear_danmaku(fallback_status);
     }
 
     fn clear_danmaku(&self, status: DanmakuPopoverStatus) {
@@ -1075,10 +1220,13 @@ impl MPVPage {
         imp.danmaku_sync.reset();
         imp.danmakw.stop_rendering();
         imp.danmakw.set_visible(false);
-        imp.pending_playback.take();
+        imp.playback_loads.borrow_mut().take_active();
         imp.cached_playback.take();
         imp.loading_box.set_visible(false);
         imp.spinner.set_visible(false);
+        self.next_danmaku_generation();
+        imp.external_danmaku_source.take();
+        self.clear_danmaku(DanmakuPopoverStatus::Idle);
     }
 
     fn fail_playback(&self, message: impl Into<String>) {
@@ -1099,7 +1247,6 @@ impl MPVPage {
 
     fn cancel_pending_playback(&self) {
         self.begin_play_request();
-        self.imp().pending_playback.take();
     }
 
     pub fn play(
@@ -1111,9 +1258,6 @@ impl MPVPage {
             .as_ref()
             .is_none_or(|current| current.id() != item.id());
         let imp = self.imp();
-        if video_changed {
-            imp.external_danmaku_source.take();
-        }
         imp.file_loaded.set(false);
         imp.media_source_fallback.take();
         imp.danmaku_sync.reset();
@@ -1147,9 +1291,6 @@ impl MPVPage {
 
         let id = item.id();
         let series_id = item.series_id();
-        self.imp().video_scale.reset_scale();
-        self.imp().last_playback_position.set(start_seconds);
-        self.reset_skippable_segments();
 
         // If the video_matcher is None, field wont be updated
         if let Some(video_matcher) = video_matcher {
@@ -1159,11 +1300,27 @@ impl MPVPage {
         }
 
         let cache_key = PlaybackCacheKey::new(
+            PlaybackCacheScope::current(),
             id.clone(),
             selected.as_ref(),
             self.imp().video_version_matcher.borrow().clone(),
         );
         let generation = self.begin_play_request();
+        let resume_cached = self.imp().cached_playback.borrow().as_ref() == Some(&cache_key);
+        let should_refresh_danmaku = should_refresh_danmaku(
+            video_changed,
+            self.imp().cached_playback.borrow().as_ref(),
+            &cache_key,
+        );
+
+        if should_refresh_danmaku {
+            self.next_danmaku_generation();
+            imp.external_danmaku_source.take();
+            self.clear_danmaku(DanmakuPopoverStatus::Idle);
+        }
+        self.imp().video_scale.reset_scale();
+        self.imp().last_playback_position.set(start_seconds);
+        self.reset_skippable_segments();
 
         let track_list_changed = self.mpris_track_list_changed(&episode_list);
 
@@ -1177,7 +1334,7 @@ impl MPVPage {
             }
         }
         self.notify_track_changed();
-        if let Some(client) = self.new_danmaku_client() {
+        if should_refresh_danmaku && let Some(client) = self.new_danmaku_client() {
             if SETTINGS.mpv_danmaku_enabled() {
                 self.auto_search_danmaku(client, &item);
             } else {
@@ -1188,13 +1345,27 @@ impl MPVPage {
         }
         self.load_skippable_segments(id.to_owned());
 
-        if self.imp().cached_playback.borrow().as_ref() == Some(&cache_key) {
+        if resume_cached {
             let imp = self.imp();
+            imp.playback_loads
+                .borrow_mut()
+                .resume_cached(PlaybackRequest {
+                    generation,
+                    cache_key: cache_key.clone(),
+                });
             imp.file_loaded.set(true);
             imp.spinner.set_visible(false);
             imp.loading_box.set_visible(false);
             imp.video.resume_cached(start_seconds);
             self.update_danmaku_rendering(imp.danmaku_popover_content.enabled());
+
+            if !should_refresh_danmaku
+                && SETTINGS.mpv_danmaku_enabled()
+                && !self.has_danmaku()
+                && let Some(client) = self.new_danmaku_client()
+            {
+                self.auto_search_danmaku(client, &item);
+            }
 
             self.notify_playing();
             self.update_timeout();
@@ -1203,7 +1374,6 @@ impl MPVPage {
         }
 
         self.imp().cached_playback.take();
-        self.imp().pending_playback.replace(Some(cache_key));
         self.imp().suburl.take();
         self.imp().video.player().push_an_empty_texture();
         self.imp().video.stop();
@@ -1334,6 +1504,10 @@ impl MPVPage {
                 imp.video.set_slang(slang);
                 imp.suburl.replace(sub_url);
                 imp.media_source_fallback.replace(fallback);
+                imp.playback_loads.borrow_mut().issued(PlaybackRequest {
+                    generation,
+                    cache_key,
+                });
                 imp.video.play(&primary_url, start_seconds);
             }
         ));
@@ -1632,7 +1806,9 @@ impl MPVPage {
                         ListenEvent::FileLoaded => {
                             obj.on_file_loaded();
                         }
-                        ListenEvent::StartFile => {}
+                        ListenEvent::StartFile => {
+                            obj.on_start_file();
+                        }
                         ListenEvent::TrackList(value) => {
                             obj.set_audio_and_video_tracks_dropdown(value).await;
                         }
@@ -1770,8 +1946,13 @@ impl MPVPage {
 
     fn on_file_loaded(&self) {
         let imp = self.imp();
-        let Some(cache_key) = imp.pending_playback.take() else {
-            tracing::debug!("Ignoring file-loaded event without a pending playback request");
+        let cache_key = imp
+            .playback_loads
+            .borrow()
+            .file_loaded(imp.play_generation.get())
+            .cloned();
+        let Some(cache_key) = cache_key else {
+            tracing::debug!("Ignoring file-loaded event for a stale playback request");
             return;
         };
         imp.cached_playback.replace(Some(cache_key));
@@ -1788,6 +1969,18 @@ impl MPVPage {
         self.notify_playing();
         self.update_timeout();
         self.handle_callback(BackType::Start);
+    }
+
+    fn on_start_file(&self) {
+        let imp = self.imp();
+        let generation = imp
+            .playback_loads
+            .borrow_mut()
+            .start_file()
+            .map(|request| request.generation);
+        if generation.is_none() {
+            tracing::debug!("Ignoring start-file event without an issued playback request");
+        }
     }
 
     fn update_seeking(&self, seeking: bool, time_millis: f64) {
@@ -1818,11 +2011,27 @@ impl MPVPage {
     }
 
     fn on_end_file(&self, value: u32) {
+        let imp = self.imp();
+        let ended = imp.playback_loads.borrow_mut().take_active();
+        let ended_is_current = ended
+            .as_ref()
+            .is_some_and(|ended| ended.generation == imp.play_generation.get());
+        if ended_is_current {
+            let ended = ended.expect("current playback request is present");
+            imp.file_loaded.set(false);
+            if imp.cached_playback.borrow().as_ref() == Some(&ended.cache_key) {
+                imp.cached_playback.take();
+                self.next_danmaku_generation();
+                imp.external_danmaku_source.take();
+                self.clear_danmaku(DanmakuPopoverStatus::Idle);
+            }
+        }
+
         spawn(glib::clone!(
             #[weak(rename_to = obj)]
             self,
             async move {
-                if value == 0 {
+                if value == 0 && ended_is_current {
                     match SETTINGS.mpv_action_after_video_end() {
                         0 => obj.on_next_video().await,
                         2 => obj.on_stop_clicked(),
@@ -1834,22 +2043,32 @@ impl MPVPage {
     }
 
     fn on_error(&self, value: &str) {
+        let imp = self.imp();
+        let Some(failed) = imp.playback_loads.borrow_mut().take_active() else {
+            tracing::debug!("Ignoring playback error without an active playback request");
+            return;
+        };
+        if failed.generation != imp.play_generation.get() {
+            tracing::debug!("Ignoring playback error for a stale playback request");
+            return;
+        }
+
         if value.contains("-13")
-            && let Some(fallback) = self.imp().media_source_fallback.take()
+            && let Some(fallback) = imp.media_source_fallback.take()
         {
             tracing::info!("Direct media path failed; retrying through the media server");
             match fallback {
-                MediaSourceFallback::DirectPlay(url) => self
-                    .imp()
-                    .video
-                    .play(&url, self.imp().last_playback_position.get()),
+                MediaSourceFallback::DirectPlay(url) => {
+                    imp.playback_loads.borrow_mut().issued(failed);
+                    imp.video.play(&url, imp.last_playback_position.get());
+                }
                 MediaSourceFallback::PlaybackInfo => {
                     let error = value.to_owned();
                     spawn(glib::clone!(
                         #[weak(rename_to = obj)]
                         self,
                         async move {
-                            obj.retry_fallback(error).await;
+                            obj.retry_fallback(error, failed).await;
                         }
                     ));
                 }
@@ -1859,8 +2078,8 @@ impl MPVPage {
         self.fail_playback(value);
     }
 
-    async fn retry_fallback(&self, original_error: String) {
-        let generation = self.imp().play_generation.get();
+    async fn retry_fallback(&self, original_error: String, request: PlaybackRequest) {
+        let generation = request.generation;
         let Some(back) = self.imp().back.borrow().as_ref().cloned() else {
             self.fail_playback(&original_error);
             return;
@@ -1920,6 +2139,7 @@ impl MPVPage {
             back.livestreamid = media_source.live_stream_id;
             back.playmethod = playmethod;
         }
+        self.imp().playback_loads.borrow_mut().issued(request);
         self.imp()
             .video
             .play(fallback_url, self.imp().last_playback_position.get());
@@ -2097,19 +2317,23 @@ impl MPVPage {
 
     #[template_callback]
     pub fn on_stop_clicked(&self) {
-        self.imp().file_loaded.set(false);
-        self.imp().media_source_fallback.take();
-        self.imp().danmakw.set_visible(false);
+        let imp = self.imp();
+        imp.file_loaded.set(false);
+        imp.media_source_fallback.take();
+        imp.danmakw.set_visible(false);
         self.remove_timeout();
         self.reset_skippable_segments();
-        self.next_danmaku_generation();
-        self.imp().external_danmaku_source.take();
-        self.clear_danmaku(DanmakuPopoverStatus::Idle);
         let current_video = self.current_video();
 
-        let video = &self.imp().video;
+        let video = &imp.video;
+        let preserve_cached_playback = imp.cached_playback.borrow().is_some();
+        if !preserve_cached_playback {
+            self.next_danmaku_generation();
+            imp.external_danmaku_source.take();
+            self.clear_danmaku(DanmakuPopoverStatus::Idle);
+        }
         self.cancel_pending_playback();
-        if self.imp().cached_playback.borrow().is_some() {
+        if preserve_cached_playback {
             video.park_cached();
         } else {
             video.stop();
@@ -2408,6 +2632,18 @@ fn media_source_url(
 mod tests {
     use super::*;
 
+    fn scope(account_name: &str, user_id: &str, endpoint: &str) -> PlaybackCacheScope {
+        PlaybackCacheScope {
+            account_name: account_name.into(),
+            user_id: user_id.into(),
+            endpoint: Some(endpoint.into()),
+        }
+    }
+
+    fn cache_key(scope: PlaybackCacheScope, item_id: &str) -> PlaybackCacheKey {
+        PlaybackCacheKey::new(scope, item_id.into(), None, None)
+    }
+
     fn selection(
         media_source_id: &str, video_index: i64, subtitle_index: i64,
     ) -> SelectedVideoSubInfo {
@@ -2426,30 +2662,155 @@ mod tests {
         let other_video = selection("source-a", 1, 1);
         let other_subtitle = selection("source-a", 0, 2);
 
-        let key = PlaybackCacheKey::new("item-a".into(), Some(&first), None);
+        let scope = scope("home", "user", "https://home.example/emby/");
+        let key = PlaybackCacheKey::new(scope.clone(), "item-a".into(), Some(&first), None);
         assert_ne!(
             key,
-            PlaybackCacheKey::new("item-b".into(), Some(&first), None)
+            PlaybackCacheKey::new(scope.clone(), "item-b".into(), Some(&first), None)
         );
         assert_ne!(
             key,
-            PlaybackCacheKey::new("item-a".into(), Some(&other_source), None)
+            PlaybackCacheKey::new(scope.clone(), "item-a".into(), Some(&other_source), None)
         );
         assert_ne!(
             key,
-            PlaybackCacheKey::new("item-a".into(), Some(&other_video), None)
+            PlaybackCacheKey::new(scope.clone(), "item-a".into(), Some(&other_video), None)
         );
         assert_ne!(
             key,
-            PlaybackCacheKey::new("item-a".into(), Some(&other_subtitle), None)
+            PlaybackCacheKey::new(scope, "item-a".into(), Some(&other_subtitle), None)
         );
     }
 
     #[test]
     fn playback_cache_key_includes_version_matcher() {
+        let scope = scope("home", "user", "https://home.example/emby/");
         assert_ne!(
-            PlaybackCacheKey::new("item".into(), None, Some("1080p".into())),
-            PlaybackCacheKey::new("item".into(), None, Some("4K".into()))
+            PlaybackCacheKey::new(scope.clone(), "item".into(), None, Some("1080p".into())),
+            PlaybackCacheKey::new(scope, "item".into(), None, Some("4K".into()))
+        );
+    }
+
+    #[test]
+    fn playback_cache_key_includes_account_and_endpoint_scope() {
+        let key = cache_key(
+            scope("home", "user-a", "https://home.example/emby/"),
+            "item",
+        );
+        assert_ne!(
+            key,
+            cache_key(
+                scope("home", "user-b", "https://home.example/emby/"),
+                "item"
+            )
+        );
+        assert_ne!(
+            key,
+            cache_key(
+                scope("home", "user-a", "https://remote.example/emby/"),
+                "item"
+            )
+        );
+        assert_ne!(
+            key,
+            cache_key(
+                scope("other-account", "user-a", "https://home.example/emby/"),
+                "item"
+            )
+        );
+    }
+
+    #[test]
+    fn same_cache_key_preserves_danmaku_but_invalid_cache_refreshes_it() {
+        let first = cache_key(scope("home", "user", "https://home/emby/"), "item");
+        let other = cache_key(scope("home", "user", "https://home/emby/"), "other");
+
+        assert!(!should_refresh_danmaku(false, Some(&first), &first));
+        assert!(should_refresh_danmaku(false, Some(&first), &other));
+        assert!(should_refresh_danmaku(true, Some(&first), &first));
+    }
+
+    #[test]
+    fn playback_events_only_cache_the_current_generation() {
+        let scope = scope("home", "user", "https://home/emby/");
+        let first = PlaybackRequest {
+            generation: 1,
+            cache_key: cache_key(scope.clone(), "first"),
+        };
+        let second = PlaybackRequest {
+            generation: 2,
+            cache_key: cache_key(scope, "second"),
+        };
+        let mut state = PlaybackLoadState::default();
+        state.issued(first);
+        state.issued(second.clone());
+
+        assert_eq!(
+            state.start_file().map(|request| request.generation),
+            Some(1)
+        );
+        assert!(state.file_loaded(2).is_none());
+        assert_eq!(
+            state.start_file().map(|request| request.generation),
+            Some(2)
+        );
+        assert_eq!(state.file_loaded(2), Some(&second.cache_key));
+        assert_eq!(
+            state.start_file().map(|request| request.generation),
+            Some(2)
+        );
+        assert_eq!(state.file_loaded(2), Some(&second.cache_key));
+        assert_eq!(state.take_active(), Some(second));
+        assert_eq!(state.take_active(), None);
+    }
+
+    #[test]
+    fn cached_resume_rebinds_the_active_generation() {
+        let request = PlaybackRequest {
+            generation: 7,
+            cache_key: cache_key(scope("home", "user", "https://home/emby/"), "item"),
+        };
+        let mut state = PlaybackLoadState::default();
+        state.resume_cached(request.clone());
+
+        assert_eq!(state.file_loaded(7), Some(&request.cache_key));
+        assert!(state.file_loaded(6).is_none());
+    }
+
+    #[test]
+    fn manual_danmaku_transaction_preserves_loaded_external_track() {
+        let loaded = ManualDanmakuTransaction::new(Some("https://example/track.xml".into()), true);
+        assert!(loaded.preserve_renderer());
+        assert_eq!(loaded.external_source_to_restore(), None);
+
+        let loading =
+            ManualDanmakuTransaction::new(Some("https://example/track.xml".into()), false);
+        assert!(!loading.preserve_renderer());
+        assert_eq!(
+            loading.external_source_to_restore(),
+            Some("https://example/track.xml")
+        );
+    }
+
+    #[test]
+    fn external_source_logs_omit_query_and_fragment() {
+        assert_eq!(
+            external_source_for_log("https://example/track.xml?api_key=secret#fragment"),
+            "https://example/track.xml"
+        );
+        assert_eq!(
+            external_source_for_log("https://example/track.xml#fragment?api_key=secret"),
+            "https://example/track.xml"
+        );
+        assert_eq!(
+            external_source_for_log(
+                "https://danmaku-user:danmaku-password@example/track.xml?api_key=secret"
+            ),
+            "https://example/track.xml"
+        );
+        assert_eq!(
+            external_source_for_log("not a valid URL?api_key=secret"),
+            "<invalid external source>"
         );
     }
 
