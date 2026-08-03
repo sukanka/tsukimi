@@ -1,6 +1,10 @@
 use std::{
     ops::Deref,
     sync::OnceLock,
+    time::{
+        Duration,
+        Instant,
+    },
 };
 
 use dandanapi_client::*;
@@ -17,6 +21,19 @@ const X_APPID: &str = "e9imrhcexn";
 
 #[derive(Clone)]
 pub struct DanmakuClient(DanDanClient);
+
+pub struct EpisodeSearchResult {
+    pub episode_match: Option<(i64, String)>,
+    pub anime_count: usize,
+    pub episode_count: usize,
+}
+
+pub struct DanmakuLoadResult {
+    pub danmaku: Vec<Danmaku>,
+    pub raw_count: usize,
+    pub fetch_elapsed: Duration,
+    pub convert_elapsed: Duration,
+}
 
 impl DanmakuClient {
     pub fn instance() -> Option<Self> {
@@ -76,10 +93,23 @@ impl DanmakuClient {
 
     pub async fn search_episode(
         &self, params: SearchSearchEpisodesParams,
-    ) -> anyhow::Result<Option<(i64, String)>> {
-        let anime = self.search_animes(params).await?;
+    ) -> anyhow::Result<EpisodeSearchResult> {
+        let animes = self.search_animes(params).await?;
+        Ok(Self::summarize_episode_search(animes))
+    }
 
-        Ok(Self::first_episode_match(anime))
+    fn summarize_episode_search(animes: Vec<SearchEpisodesAnime>) -> EpisodeSearchResult {
+        let anime_count = animes.len();
+        let episode_count = animes
+            .iter()
+            .map(|anime| anime.episodes.as_ref().map_or(0, Vec::len))
+            .sum();
+
+        EpisodeSearchResult {
+            episode_match: Self::first_episode_match(animes),
+            anime_count,
+            episode_count,
+        }
     }
 
     fn first_episode_match(animes: Vec<SearchEpisodesAnime>) -> Option<(i64, String)> {
@@ -103,7 +133,8 @@ impl DanmakuClient {
         })
     }
 
-    pub async fn get_comments(&self, episode_id: i64) -> anyhow::Result<Option<Vec<Danmaku>>> {
+    pub async fn get_comments(&self, episode_id: i64) -> anyhow::Result<DanmakuLoadResult> {
+        let fetch_started = Instant::now();
         let response = self
             .route(CommentGetComment {
                 episode_id,
@@ -114,17 +145,56 @@ impl DanmakuClient {
                 },
             })
             .await?;
+        let fetch_elapsed = fetch_started.elapsed();
 
-        let Some(comments) = response.comments else {
-            return Ok(None);
-        };
-
+        let comments = response.comments.unwrap_or_default();
+        let raw_count = comments.len();
+        let convert_started = Instant::now();
         let danmaku = comments
             .into_iter()
             .map(DanmakuExt::into_danmaku)
             .filter(|danmaku| !danmaku.content.is_empty())
             .collect::<Vec<_>>();
 
-        Ok((!danmaku.is_empty()).then_some(danmaku))
+        Ok(DanmakuLoadResult {
+            danmaku,
+            raw_count,
+            fetch_elapsed,
+            convert_elapsed: convert_started.elapsed(),
+        })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn episode_search_summary_counts_candidates() {
+        let animes = serde_json::from_value::<Vec<SearchEpisodesAnime>>(serde_json::json!([
+            {
+                "animeId": 1,
+                "animeTitle": "First",
+                "episodes": [
+                    { "episodeId": 11, "episodeTitle": "Episode 1" },
+                    { "episodeId": 12, "episodeTitle": "Episode 2" }
+                ]
+            },
+            {
+                "animeId": 2,
+                "animeTitle": "Second",
+                "episodes": [{ "episodeId": 21, "episodeTitle": "Episode 1" }]
+            }
+        ]))
+        .expect("valid episode search response");
+
+        let result = DanmakuClient::summarize_episode_search(animes);
+
+        assert_eq!(result.anime_count, 2);
+        assert_eq!(result.episode_count, 3);
+        assert_eq!(
+            result.episode_match,
+            Some((11, "Episode 1 - First".to_string()))
+        );
     }
 }
