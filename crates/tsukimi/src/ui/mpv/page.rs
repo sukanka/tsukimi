@@ -64,6 +64,15 @@ const MIN_MOTION_TIME: i64 = 100000;
 const PREV_CHAPTER_KEY: gtk::gdk::Key = gtk::gdk::Key::Page_Down;
 const NEXT_CHAPTER_KEY: gtk::gdk::Key = gtk::gdk::Key::Page_Up;
 
+fn danmaku_timeline(items: &[Danmaku]) -> Vec<f64> {
+    items
+        .iter()
+        .filter_map(|item| {
+            (item.start.is_finite() && item.start >= 0.0).then_some(item.start / 1000.0)
+        })
+        .collect()
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct PlaybackDirectMode {
     pub enable_direct_play: bool,
@@ -625,7 +634,9 @@ impl MPVPage {
     fn apply_danmaku(&self, danmaku: Vec<Danmaku>, item_name: String, manual: bool) {
         let imp = self.imp();
         let count = danmaku.len();
+        let timeline = danmaku_timeline(&danmaku);
         imp.danmakw.load_danmaku(danmaku);
+        imp.video_scale.set_danmaku_timeline(timeline);
         imp.danmaku_count.set(count);
         let status = if manual {
             DanmakuPopoverStatus::ManualLoaded(count, item_name)
@@ -682,6 +693,7 @@ impl MPVPage {
         imp.danmaku_count.set(0);
         imp.danmakw.clear_danmaku();
         imp.danmakw.stop_rendering();
+        imp.video_scale.set_danmaku_timeline(Vec::new());
         imp.danmaku_popover_content.set_status(status);
     }
 
@@ -1450,6 +1462,7 @@ impl MPVPage {
         let duration = format_duration(value as i64);
         let width_chars = duration.chars().count() as i32;
         imp.video_scale.set_range(0.0, value);
+        imp.video_scale.refresh_danmaku_distribution();
         imp.progress_time_label.set_width_chars(width_chars);
         imp.duration_label.set_width_chars(width_chars);
         imp.duration_label.set_text(&duration);
