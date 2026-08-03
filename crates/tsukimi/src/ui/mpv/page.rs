@@ -522,10 +522,8 @@ impl MPVPage {
                 if self.imp().danmaku_popover_content.enabled()
                     && let Some(item) = self.current_video()
                 {
-                    if let Some(client) = DanmakuClient::instance() {
+                    if let Some(client) = self.new_danmaku_client() {
                         self.auto_search_danmaku(client, &item);
-                    } else {
-                        self.clear_danmaku(DanmakuPopoverStatus::SecretNotExist);
                     }
                 }
             }
@@ -604,10 +602,8 @@ impl MPVPage {
         if self.imp().danmaku_popover_content.enabled()
             && let Some(item) = self.current_video()
         {
-            if let Some(client) = DanmakuClient::instance() {
+            if let Some(client) = self.new_danmaku_client() {
                 self.auto_search_danmaku(client, &item);
-            } else {
-                self.clear_danmaku(DanmakuPopoverStatus::SecretNotExist);
             }
         }
     }
@@ -1017,6 +1013,17 @@ impl MPVPage {
         imp.danmaku_popover_content.set_status(status);
     }
 
+    fn new_danmaku_client(&self) -> Option<DanmakuClient> {
+        match DanmakuClient::new() {
+            Ok(client) => Some(client),
+            Err(error) => {
+                tracing::warn!(%error, "Failed to initialize danmaku client");
+                self.clear_danmaku(DanmakuPopoverStatus::SecretNotExist);
+                None
+            }
+        }
+    }
+
     fn update_danmaku_rendering(&self, enabled: bool) {
         let imp = self.imp();
         let ready = enabled && self.has_danmaku() && imp.file_loaded.get();
@@ -1037,7 +1044,7 @@ impl MPVPage {
     pub fn on_danmaku_switch_state_set(&self, state: bool) {
         if state && !self.has_danmaku() {
             if let Some(item) = self.current_video()
-                && let Some(client) = DanmakuClient::instance()
+                && let Some(client) = self.new_danmaku_client()
             {
                 self.auto_search_danmaku(client, &item);
             }
@@ -1170,7 +1177,7 @@ impl MPVPage {
             }
         }
         self.notify_track_changed();
-        if let Some(client) = DanmakuClient::instance() {
+        if let Some(client) = self.new_danmaku_client() {
             if SETTINGS.mpv_danmaku_enabled() {
                 self.auto_search_danmaku(client, &item);
             } else {
@@ -1178,8 +1185,6 @@ impl MPVPage {
                 self.imp().external_danmaku_source.take();
                 self.clear_danmaku(DanmakuPopoverStatus::Idle);
             }
-        } else {
-            self.clear_danmaku(DanmakuPopoverStatus::SecretNotExist);
         }
         self.load_skippable_segments(id.to_owned());
 

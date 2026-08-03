@@ -9,11 +9,14 @@ pub use models::{
     SETTINGS,
     jellyfin_cache_path,
 };
-pub(crate) use mpv::options_matcher::{
-    match_audio_channels,
-    match_hwdec_interop,
-    match_sub_border_style,
-    match_video_upscale,
+pub(crate) use mpv::{
+    danmaku_client::DanmakuClient,
+    options_matcher::{
+        match_audio_channels,
+        match_hwdec_interop,
+        match_sub_border_style,
+        match_video_upscale,
+    },
 };
 pub use widgets::{
     GlobalToast,
