@@ -40,6 +40,7 @@ pub mod imp {
         access_token: RefCell<String>,
         #[property(get, set)]
         server_type: Cell<u32>,
+        pub inner: RefCell<Account>,
     }
 
     #[glib::derived_properties]
@@ -58,29 +59,29 @@ glib::wrapper! {
 
 impl AccountItem {
     pub fn from_simple(account: &Account) -> Self {
-        let account = account.to_owned();
         let item: AccountItem = glib::object::Object::new();
-        item.set_server(account.server);
-        item.set_servername(account.servername);
-        item.set_username(account.username);
-        item.set_password(account.password);
-        item.set_port(account.port);
-        item.set_user_id(account.user_id);
-        item.set_access_token(account.access_token);
+        item.set_server(account.server.as_str());
+        item.set_servername(account.servername.as_str());
+        item.set_username(account.username.as_str());
+        item.set_password(account.password.as_str());
+        item.set_port(account.port.as_str());
+        item.set_user_id(account.user_id.as_str());
+        item.set_access_token(account.access_token.as_str());
         item.set_server_type(account.server_type.unwrap_or_default().index());
+        item.imp().inner.replace(account.clone());
         item
     }
 
     pub fn account(&self) -> Account {
-        Account {
-            server: self.server(),
-            servername: self.servername(),
-            username: self.username(),
-            password: self.password(),
-            port: self.port(),
-            user_id: self.user_id(),
-            access_token: self.access_token(),
-            server_type: Some(ServerType::from_index(self.server_type())),
-        }
+        let mut account = self.imp().inner.borrow().clone();
+        account.server = self.server();
+        account.servername = self.servername();
+        account.username = self.username();
+        account.password = self.password();
+        account.port = self.port();
+        account.user_id = self.user_id();
+        account.access_token = self.access_token();
+        account.server_type = Some(ServerType::from_index(self.server_type()));
+        account
     }
 }

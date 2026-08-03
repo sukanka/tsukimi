@@ -4,6 +4,10 @@ use std::{
     future,
     hash::Hasher,
     path::PathBuf,
+    sync::atomic::{
+        AtomicU64,
+        Ordering,
+    },
     time::Duration,
 };
 
@@ -128,6 +132,7 @@ pub struct Session {
     pub account: Account,
     pub url_headers: Option<(Url, HeaderMap)>,
     pub server_name_hash: String,
+    generation: u64,
 }
 
 impl Session {
@@ -136,12 +141,14 @@ impl Session {
             account: Account::default(),
             url_headers: None,
             server_name_hash: String::new(),
+            generation: 0,
         }
     }
 }
 
 pub struct JellyfinClient {
     pub session: ArcSwap<Session>,
+    session_generation: AtomicU64,
     pub semaphore: tokio::sync::Semaphore,
     pub client: Client,
     next_up_date_cache: Cache<NextUpDateKey, Option<DateTime<Utc>>>,
@@ -203,10 +210,19 @@ fn generate_hash(s: &str) -> String {
     format!("{:x}", hasher.finish())
 }
 
+fn next_session_generation(generation: &AtomicU64) -> u64 {
+    generation.fetch_add(1, Ordering::AcqRel).wrapping_add(1)
+}
+
+fn is_current_session_generation(session: &ArcSwap<Session>, expected: u64) -> bool {
+    session.load().generation == expected
+}
+
 impl Default for JellyfinClient {
     fn default() -> Self {
         Self {
             session: ArcSwap::from_pointee(Session::empty()),
+            session_generation: AtomicU64::new(0),
             semaphore: tokio::sync::Semaphore::new(SETTINGS.threads() as usize),
             client: ReqClient::build(),
             next_up_date_cache: Cache::builder()
@@ -232,6 +248,12 @@ impl JellyfinClient {
     }
 
     pub async fn init(&self, account: &Account) -> Result<(), Box<dyn std::error::Error>> {
+        self.init_with_generation(account).await.map(|_| ())
+    }
+
+    pub(crate) async fn init_with_generation(
+        &self, account: &Account,
+    ) -> Result<u64, Box<dyn std::error::Error>> {
         let server_type = account.server_type.unwrap_or_default();
         let headers = build_headers(
             Some(&account.user_id),
@@ -239,10 +261,13 @@ impl JellyfinClient {
             server_type,
         )?;
         let url = build_base_url(account.url()?, server_type)?;
+
+        let generation = next_session_generation(&self.session_generation);
         self.session.store(Arc::new(Session {
             account: account.clone(),
             url_headers: Some((url, headers)),
             server_name_hash: generate_hash(&account.servername),
+            generation,
         }));
         self.next_up_date_cache.invalidate_all();
 
@@ -250,14 +275,29 @@ impl JellyfinClient {
         spawn_tokio_without_await(async move {
             match JELLYFIN_CLIENT.get_current_user().await {
                 Ok(r) => {
-                    if r.policy.is_administrator {
-                        crate::ui::provider::set_admin(true);
+                    if JELLYFIN_CLIENT.is_session_generation_current(generation) {
+                        crate::ui::provider::set_admin(r.policy.is_administrator);
                     }
                 }
                 Err(e) => warn!("Failed to authenticate as admin: {}", e),
             }
         });
-        Ok(())
+        Ok(generation)
+    }
+
+    pub(crate) fn is_session_generation_current(&self, expected: u64) -> bool {
+        is_current_session_generation(&self.session, expected)
+    }
+
+    pub(crate) async fn authenticate_admin_for_generation(&self, generation: u64) -> Result<User> {
+        if !self.is_session_generation_current(generation) {
+            bail!("Session changed before authentication");
+        }
+        let response = self.get_current_user().await?;
+        if !self.is_session_generation_current(generation) {
+            bail!("Session changed during authentication");
+        }
+        Ok(response)
     }
 
     pub async fn request<T>(&self, path: &str, params: &[(&str, &str)]) -> Result<T>
@@ -345,9 +385,11 @@ impl JellyfinClient {
     }
 
     fn prepare_unauthenticated_request(
-        &self, method: Method, server: &str, port: &str, server_type: ServerType, path: &str,
+        &self, method: Method, server: &str, port: &str, base_path: Option<&str>,
+        server_type: ServerType, request_path: &str,
     ) -> Result<RequestBuilder> {
-        let url = build_base_url(build_url(server, port)?, server_type)?.join(path)?;
+        let url =
+            build_base_url(build_url(server, port, base_path)?, server_type)?.join(request_path)?;
         Ok(self
             .client
             .request(method, url)
@@ -387,7 +429,8 @@ impl JellyfinClient {
     }
 
     pub async fn login(
-        &self, server: &str, port: &str, server_type: ServerType, username: &str, password: &str,
+        &self, server: &str, port: &str, path: Option<&str>, server_type: ServerType,
+        username: &str, password: &str,
     ) -> Result<LoginResponse> {
         let body = json!({
             "Username": username,
@@ -398,6 +441,7 @@ impl JellyfinClient {
                 Method::POST,
                 server,
                 port,
+                path,
                 server_type,
                 "Users/AuthenticateByName",
             )?
@@ -1443,12 +1487,13 @@ impl JellyfinClient {
     }
 
     pub async fn get_server_info_public(
-        &self, server: &str, port: &str, server_type: ServerType,
+        &self, server: &str, port: &str, path: Option<&str>, server_type: ServerType,
     ) -> Result<PublicServerInfo> {
         let request = self.prepare_unauthenticated_request(
             Method::GET,
             server,
             port,
+            path,
             server_type,
             "System/Info/Public",
         )?;
@@ -1577,6 +1622,34 @@ impl JellyfinClient {
 }
 
 #[cfg(test)]
+mod session_generation_tests {
+    use super::*;
+
+    #[test]
+    fn last_stored_session_snapshot_determines_the_current_generation() {
+        let allocator = AtomicU64::new(0);
+        let account_a = next_session_generation(&allocator);
+        let account_b = next_session_generation(&allocator);
+        let session = ArcSwap::from_pointee(Session::empty());
+
+        session.store(Arc::new(Session {
+            generation: account_b,
+            ..Session::empty()
+        }));
+        assert!(is_current_session_generation(&session, account_b));
+
+        // Even if an older initialization stores last, the generation and
+        // session snapshot remain paired.
+        session.store(Arc::new(Session {
+            generation: account_a,
+            ..Session::empty()
+        }));
+        assert!(is_current_session_generation(&session, account_a));
+        assert!(!is_current_session_generation(&session, account_b));
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use crate::client::{
@@ -1584,12 +1657,40 @@ mod tests {
         error::UserFacingError,
     };
 
+    #[test]
+    fn builds_emby_base_url_with_normalized_path() {
+        let url = build_base_url(
+            build_url("https://example.com", "443", Some("/jellyfin/")).unwrap(),
+            ServerType::Emby,
+        )
+        .unwrap();
+
+        assert_eq!(url.as_str(), "https://example.com/jellyfin/emby/");
+    }
+
+    #[test]
+    fn builds_jellyfin_base_url_without_emby_suffix() {
+        let url = build_base_url(
+            build_url("https://example.com", "443", Some("/jellyfin/")).unwrap(),
+            ServerType::Jellyfin,
+        )
+        .unwrap();
+
+        assert_eq!(url.as_str(), "https://example.com/jellyfin/");
+    }
+
+    #[test]
+    fn rejects_invalid_server_port() {
+        assert!(build_url("https://example.com", "invalid", None).is_err());
+    }
+
     #[tokio::test]
     async fn search() {
         let result = JELLYFIN_CLIENT
             .login(
                 "https://example.com",
                 "443",
+                None,
                 ServerType::Jellyfin,
                 "test",
                 "test",
@@ -1607,6 +1708,7 @@ mod tests {
                     user_id: response.user.id,
                     access_token: response.access_token,
                     server_type: Some(ServerType::Jellyfin),
+                    ..Default::default()
                 };
                 let _ = JELLYFIN_CLIENT.init(&account).await;
             }
@@ -1646,6 +1748,7 @@ mod tests {
             .login(
                 "http://127.0.0.1",
                 "8096",
+                None,
                 ServerType::Jellyfin,
                 "inaha",
                 "",
@@ -1663,6 +1766,7 @@ mod tests {
                     user_id: response.user.id,
                     access_token: response.access_token,
                     server_type: Some(ServerType::Jellyfin),
+                    ..Default::default()
                 };
                 let _ = JELLYFIN_CLIENT.init(&account).await;
             }
