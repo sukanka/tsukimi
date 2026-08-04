@@ -38,6 +38,7 @@ use crate::{
 
 const KEY: Option<&str> = option_env!("DANDANAPI_SECRET_KEY");
 const CIPHERTEXT: &[u8] = include_bytes!("../../../secret/secret");
+const ANIME_DETAIL_SEARCH_TIMEOUT: Duration = Duration::from_secs(10);
 
 #[derive(Clone)]
 enum DanmakuCredentials {
@@ -107,11 +108,12 @@ struct CompatibleSearchAnimeDetails {
 
 impl From<CompatibleSearchAnimeDetails> for SearchAnimeDetails {
     fn from(anime: CompatibleSearchAnimeDetails) -> Self {
+        let anime_type = compatible_anime_type(anime.type_label.as_ref());
         Self {
             anime_id: anime.anime_id,
             bangumi_id: anime.bangumi_id,
             anime_title: anime.anime_title,
-            r#type: None,
+            r#type: anime_type,
             type_description: compatible_type_description(anime.type_description, anime.type_label),
             image_url: anime.image_url,
             start_date: None,
@@ -137,10 +139,11 @@ struct CompatibleSearchEpisodesAnime {
 
 impl From<CompatibleSearchEpisodesAnime> for SearchEpisodesAnime {
     fn from(anime: CompatibleSearchEpisodesAnime) -> Self {
+        let anime_type = compatible_anime_type(anime.type_label.as_ref());
         Self {
             anime_id: anime.anime_id,
             anime_title: anime.anime_title,
-            r#type: None,
+            r#type: anime_type,
             type_description: compatible_type_description(anime.type_description, anime.type_label),
             episodes: anime
                 .episodes
@@ -174,6 +177,10 @@ fn compatible_type_description(
             .and_then(|value| value.as_str().map(str::to_string))
             .filter(|value| !value.trim().is_empty())
     })
+}
+
+fn compatible_anime_type(type_label: Option<&serde_json::Value>) -> Option<AnimeType> {
+    serde_json::from_value(type_label?.clone()).ok()
 }
 
 #[derive(Clone)]
@@ -354,63 +361,19 @@ impl DanmakuClient {
     pub async fn search_anime_details(
         &self, keyword: String, anime_type: AnimeType,
     ) -> anyhow::Result<Vec<SearchAnimeDetails>> {
-        let fallback_keyword = keyword.clone();
-        let primary_result = self
-            .request_compatible_search::<_, CompatibleSearchAnimeDetails>(SearchSearchAnime {
+        let animes = tokio::time::timeout(
+            ANIME_DETAIL_SEARCH_TIMEOUT,
+            self.request_compatible_search::<_, CompatibleSearchAnimeDetails>(SearchSearchAnime {
                 params: SearchSearchAnimeParams {
                     keyword,
                     r#type: anime_type,
                     v2: true,
                 },
-            })
-            .await;
-
-        match primary_result {
-            Ok(animes) if !animes.is_empty() => Ok(animes.into_iter().map(Into::into).collect()),
-            primary_result => {
-                let primary_error = primary_result.err();
-                let fallback_result = self
-                    .search_animes(SearchSearchEpisodesParams {
-                        anime: Some(fallback_keyword),
-                        tmdb_id: None,
-                        tmdb_id_type: 0,
-                        episode: None,
-                        v2: true,
-                    })
-                    .await;
-
-                match fallback_result {
-                    Ok(animes) => {
-                        match primary_error {
-                            Some(error) => tracing::debug!(
-                                %error,
-                                "Danmaku anime search used the episode-search fallback"
-                            ),
-                            None => tracing::debug!(
-                                "Danmaku anime search had no results; used the episode-search fallback"
-                            ),
-                        }
-                        Ok(animes
-                            .into_iter()
-                            .map(Self::episode_anime_to_search_details)
-                            .collect())
-                    }
-                    Err(fallback_error) => {
-                        if let Some(primary_error) = primary_error {
-                            Err(anyhow::anyhow!(
-                                "anime search failed: {primary_error:#}; episode-search fallback failed: {fallback_error:#}"
-                            ))
-                        } else {
-                            tracing::debug!(
-                                %fallback_error,
-                                "Episode-search fallback failed after an empty anime search"
-                            );
-                            Ok(Vec::new())
-                        }
-                    }
-                }
-            }
-        }
+            }),
+        )
+        .await
+        .map_err(|_| anyhow::anyhow!("anime detail search timed out"))??;
+        Ok(animes.into_iter().map(Into::into).collect())
     }
 
     pub async fn search_animes(
@@ -424,21 +387,6 @@ impl DanmakuClient {
             .into_iter()
             .map(Into::into)
             .collect())
-    }
-
-    fn episode_anime_to_search_details(anime: SearchEpisodesAnime) -> SearchAnimeDetails {
-        SearchAnimeDetails {
-            anime_id: anime.anime_id,
-            bangumi_id: None,
-            anime_title: anime.anime_title,
-            r#type: anime.r#type,
-            type_description: anime.type_description,
-            image_url: None,
-            start_date: None,
-            episode_count: None,
-            rating: None,
-            is_favorited: None,
-        }
     }
 
     pub async fn search_episode(
@@ -580,6 +528,35 @@ mod diagnostic_tests {
             .pop()
             .expect("episode result");
         assert_eq!(episode.episode_id, Some(4201));
+    }
+
+    #[test]
+    fn compatible_search_preserves_standard_anime_types() {
+        let response = serde_json::from_value::<
+            CompatibleSearchResponse<CompatibleSearchEpisodesAnime>,
+        >(serde_json::json!({
+            "errorCode": 0,
+            "success": true,
+            "animes": [{
+                "animeId": 42,
+                "animeTitle": "Example",
+                "type": "movie",
+                "typeDescription": "Anime Film",
+                "episodes": [{ "episodeId": 4201, "episodeTitle": "Movie" }]
+            }]
+        }))
+        .expect("compatible episode search response");
+
+        let anime = SearchEpisodesAnime::from(
+            response
+                .into_animes()
+                .expect("successful response")
+                .pop()
+                .expect("anime result"),
+        );
+
+        assert!(matches!(anime.r#type, Some(AnimeType::Movie)));
+        assert_eq!(anime.type_description.as_deref(), Some("Anime Film"));
     }
 
     #[test]
