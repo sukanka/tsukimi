@@ -447,6 +447,7 @@ impl DanmakuSearchDialog {
             .collect::<Vec<_>>();
         for item in &items {
             let row = adw::ActionRow::builder()
+                .use_markup(false)
                 .title(item.name())
                 .activatable(true)
                 .build();
