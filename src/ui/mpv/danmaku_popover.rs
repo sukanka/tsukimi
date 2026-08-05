@@ -167,6 +167,9 @@ pub mod imp {
 
     impl DanmakuPopover {
         fn set_status(&self, status: DanmakuPopoverStatus) {
+            // `cargo run` can load an older installed resource bundle, so keep API-provided
+            // titles plain in code as well as in the current UI template.
+            self.danmaku_status_row.set_use_markup(false);
             if self.status.replace(status.clone()) == status {
                 return;
             }
