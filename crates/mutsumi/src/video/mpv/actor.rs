@@ -1,15 +1,35 @@
 use std::{
     ops::Deref,
-    sync::{Arc, OnceLock},
+    os::fd::IntoRawFd,
+    sync::{
+        Arc,
+        Mutex,
+        OnceLock,
+    },
 };
 
 use crate::MutsumiMpvError;
 
-use super::{logging, *};
-use flume::{Receiver, Sender, unbounded};
+use super::{
+    logging,
+    proxy::{
+        ProxyConnection,
+        start_mpv_proxy,
+    },
+    *,
+};
+use flume::{
+    Receiver,
+    Sender,
+    unbounded,
+};
 use libmpv2::{
-    Format, Mpv,
-    events::{Event, PropertyData},
+    Format,
+    Mpv,
+    events::{
+        Event,
+        PropertyData,
+    },
 };
 use mutsumi_prelude::spawn_tokio_blocking;
 use once_cell::sync::Lazy;
@@ -19,6 +39,7 @@ type MpvInitializer =
     dyn Fn(libmpv2::MpvInitializer) -> libmpv2::Result<()> + Send + Sync + 'static;
 
 static MPV_INITIALIZER: OnceLock<Box<MpvInitializer>> = OnceLock::new();
+static WAYLAND_HANDOFF_LOCK: Mutex<()> = Mutex::new(());
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 #[error("the mpv initializer has already been set")]
@@ -113,6 +134,11 @@ pub enum MpvMessage {
         cmd: String,
         args: Vec<String>,
     },
+    WaylandCommand {
+        cmd: String,
+        args: Vec<String>,
+    },
+    SetPlaylistPos(i64),
     SetProperty {
         property: String,
         value: MpvValue,
@@ -211,6 +237,9 @@ impl MpvActor {
             .expect("Failed to spawn mpv event thread");
 
         spawn_tokio_blocking(move || {
+            let mut proxy: Option<ProxyConnection> = None;
+            let mut proxy_needs_revalidation = false;
+
             loop {
                 let Ok(msg) = MPV_CTRL.rx.recv() else {
                     continue;
@@ -219,7 +248,43 @@ impl MpvActor {
                 match msg {
                     MpvMessage::Command { cmd, args } => {
                         let args_ref: Vec<&str> = args.iter().map(String::as_str).collect();
-                        let _ = mpv.command(&cmd, &args_ref);
+                        let result = mpv.command(&cmd, &args_ref);
+                        if cmd == "stop" && result.is_ok() {
+                            proxy_needs_revalidation = true;
+                        }
+                    }
+                    MpvMessage::WaylandCommand { cmd, args } => {
+                        let args_ref: Vec<&str> = args.iter().map(String::as_str).collect();
+                        run_wayland_command(
+                            &mpv,
+                            &mut proxy,
+                            &mut proxy_needs_revalidation,
+                            &cmd,
+                            &args_ref,
+                        );
+                    }
+                    MpvMessage::SetPlaylistPos(pos) => {
+                        let playlist_count = mpv
+                            .get_property::<i64>("playlist-count")
+                            .unwrap_or(i64::MAX);
+                        let current_pos = mpv.get_property::<i64>("playlist-pos").unwrap_or(-1);
+                        let starts_file = pos >= 0 && pos < playlist_count && pos != current_pos;
+
+                        if starts_file {
+                            let pos = pos.to_string();
+                            run_wayland_command(
+                                &mpv,
+                                &mut proxy,
+                                &mut proxy_needs_revalidation,
+                                "set",
+                                &["playlist-pos", pos.as_str()],
+                            );
+                        } else {
+                            let result = mpv.set_property("playlist-pos", pos);
+                            if result.is_ok() && (pos < 0 || pos >= playlist_count) {
+                                proxy_needs_revalidation = true;
+                            }
+                        }
                     }
                     MpvMessage::SetProperty { property, value } => {
                         let _ = value.set_on(&mpv, &property);
@@ -259,9 +324,7 @@ impl MpvActor {
     }
 
     pub async fn get_property(
-        &self,
-        property: &str,
-        value_type: MpvValueType,
+        &self, property: &str, value_type: MpvValueType,
     ) -> Result<MpvValue, tokio::sync::oneshot::error::RecvError> {
         let (tx, rx) = tokio::sync::oneshot::channel::<MpvValue>();
         if let Err(error) = MPV_CTRL.tx.send(MpvMessage::GetProperty {
@@ -285,6 +348,133 @@ impl MpvActor {
             tracing::warn!(target: "mutsumi::mpv", %error, "mpv actor is unavailable");
         }
     }
+
+    pub fn wayland_command(&self, cmd: &str, args: &[&str]) {
+        let cmd_owned = cmd.to_string();
+        let args_owned: Vec<String> = args.iter().map(|s| s.to_string()).collect();
+        if let Err(error) = MPV_CTRL.tx.send(MpvMessage::WaylandCommand {
+            cmd: cmd_owned,
+            args: args_owned,
+        }) {
+            tracing::warn!(target: "mutsumi::mpv", %error, "mpv actor is unavailable");
+        }
+    }
+
+    pub fn set_playlist_pos(&self, pos: i64) {
+        if let Err(error) = MPV_CTRL.tx.send(MpvMessage::SetPlaylistPos(pos)) {
+            tracing::warn!(target: "mutsumi::mpv", %error, "mpv actor is unavailable");
+        }
+    }
+}
+
+fn run_wayland_command(
+    mpv: &Mpv, proxy: &mut Option<ProxyConnection>, proxy_needs_revalidation: &mut bool,
+    command: &str, args: &[&str],
+) {
+    if std::env::var_os("WAYLAND_DISPLAY").is_none() {
+        let _ = mpv.command(command, args);
+        *proxy_needs_revalidation = false;
+        return;
+    }
+
+    let proxy_finished = proxy.as_ref().is_some_and(ProxyConnection::is_finished);
+    let proxy_stopped = *proxy_needs_revalidation
+        && proxy.is_some()
+        && !mpv.get_property::<bool>("vo-configured").unwrap_or(false);
+    if proxy_finished || proxy_stopped {
+        drop(proxy.take());
+    }
+    *proxy_needs_revalidation = false;
+
+    // Recheck immediately before the command to narrow the disconnect race
+    // between validating a reused proxy and starting the next file.
+    if proxy.as_ref().is_some_and(ProxyConnection::is_finished) {
+        drop(proxy.take());
+    }
+    if proxy.is_some() {
+        if let Err(error) = mpv.command(command, args) {
+            tracing::error!(
+                target: "mutsumi::mpv",
+                %error,
+                "Wayland MPV command failed"
+            );
+        }
+        return;
+    }
+
+    let mut connection = match start_mpv_proxy() {
+        Ok(connection) => connection,
+        Err(error) => {
+            stop_failed_wayland_load(mpv, error.to_string());
+            return;
+        }
+    };
+    let result = connection
+        .take_client_fd()
+        .ok_or_else(|| "Wayland proxy did not return a client file descriptor".to_string())
+        .and_then(|client_fd| {
+            command_with_wayland_socket(mpv, &connection, client_fd, command, args)
+        });
+
+    match result {
+        Ok(()) => *proxy = Some(connection),
+        Err(error) => stop_failed_wayland_load(mpv, error),
+    }
+}
+
+fn command_with_wayland_socket(
+    mpv: &Mpv, connection: &ProxyConnection, client_fd: std::os::fd::OwnedFd, command: &str,
+    args: &[&str],
+) -> Result<(), String> {
+    // WAYLAND_SOCKET is process-global. Keep the handoff serialized until
+    // this exact synthetic connection requests its registry; returning from
+    // `loadfile` does not prove that MPV's VO thread consumed the descriptor.
+    let _guard = WAYLAND_HANDOFF_LOCK.lock().unwrap();
+    let previous = std::env::var_os("WAYLAND_SOCKET");
+    let raw_fd = client_fd.into_raw_fd();
+    unsafe { std::env::set_var("WAYLAND_SOCKET", raw_fd.to_string()) };
+
+    let command_result = mpv
+        .command(command, args)
+        .map_err(|error| error.to_string());
+    let command_failed = command_result.is_err();
+    let result = command_result.and_then(|()| {
+        connection
+            .wait_until_connected(std::time::Duration::from_secs(10))
+            .map_err(|error| error.to_string())
+    });
+
+    match previous {
+        Some(previous) => unsafe { std::env::set_var("WAYLAND_SOCKET", previous) },
+        None => unsafe { std::env::remove_var("WAYLAND_SOCKET") },
+    }
+
+    if command_failed {
+        unsafe { libc::close(raw_fd) };
+    } else if let Err(error) = &result {
+        // Ownership is ambiguous after a timeout: MPV may have consumed the
+        // descriptor without reaching get_registry, or it may not have taken
+        // it at all. Closing it could race with libwayland; leaving it open can
+        // leak one fd in the latter case, which is the safer failure mode.
+        tracing::warn!(
+            target: "mutsumi::mpv",
+            raw_fd,
+            %error,
+            "Wayland proxy connection handshake failed"
+        );
+    }
+
+    result
+}
+
+fn stop_failed_wayland_load(mpv: &Mpv, error: String) {
+    tracing::error!(
+        target: "mutsumi::mpv",
+        %error,
+        "Wayland proxy handoff failed"
+    );
+    let _ = mpv.command("stop", &[]);
+    let _ = MPV_EVENT_CHANNEL.tx.send(ListenEvent::Error(error));
 }
 
 impl SendMpv {
@@ -424,9 +614,7 @@ impl SendMpv {
     }
 
     fn get_property_value(
-        &self,
-        property: &str,
-        value_type: MpvValueType,
+        &self, property: &str, value_type: MpvValueType,
     ) -> libmpv2::Result<MpvValue> {
         match value_type {
             MpvValueType::Bool => self.get_property::<bool>(property).map(MpvValue::Bool),
