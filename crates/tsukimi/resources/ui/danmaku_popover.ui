@@ -68,6 +68,20 @@
                     </child>
                     <child>
                       <object class="AdwPreferencesGroup">
+                        <property name="title" translatable="yes">Danmaku Servers</property>
+                        <child>
+                          <object class="AdwExpanderRow" id="danmaku_server_expander">
+                            <property name="title" translatable="yes">Active Server</property>
+                            <property name="use-markup">False</property>
+                          </object>
+                        </child>
+                        <style>
+                          <class name="boxed-list-separate"/>
+                        </style>
+                      </object>
+                    </child>
+                    <child>
+                      <object class="AdwPreferencesGroup">
                         <child>
                           <object class="AdwButtonRow">
                             <property name="start-icon-name">edit-find-symbolic</property>

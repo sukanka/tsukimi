@@ -267,6 +267,7 @@ msgid "Use Built-in Credentials"
 msgstr ""
 
 #: crates/tsukimi/resources/ui/account_settings.ui:509
+#: crates/tsukimi/resources/ui/danmaku_popover.ui:71
 msgid "Danmaku Servers"
 msgstr ""
 
@@ -275,6 +276,7 @@ msgid "Custom servers must implement the dandanplay API."
 msgstr ""
 
 #: crates/tsukimi/resources/ui/account_settings.ui:513
+#: crates/tsukimi/resources/ui/danmaku_popover.ui:74
 msgid "Active Server"
 msgstr ""
 

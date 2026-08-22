@@ -8,11 +8,21 @@ use gtk::{
     glib,
 };
 
-use crate::ui::{
-    models::SETTINGS,
-    mpv::{
-        danmaku_search_dialog::DanmakuSearchDialog,
-        page::MPVPage,
+use crate::{
+    client::{
+        DEFAULT_DANMAKU_SERVER_LABEL,
+        DanmakuServer,
+    },
+    ui::{
+        models::SETTINGS,
+        mpv::{
+            danmaku_search_dialog::DanmakuSearchDialog,
+            page::MPVPage,
+        },
+        widgets::{
+            GlobalToast,
+            check_row::CheckRow,
+        },
     },
 };
 
@@ -128,6 +138,9 @@ pub mod imp {
         #[template_child]
         pub danmaku_status_icon: TemplateChild<gtk::Image>,
         #[template_child]
+        pub danmaku_server_expander: TemplateChild<adw::ExpanderRow>,
+        pub danmaku_server_rows: RefCell<Vec<CheckRow>>,
+        #[template_child]
         pub danmaku_opacity_spin: TemplateChild<adw::SpinRow>,
         #[template_child]
         pub danmaku_speed_spin: TemplateChild<adw::SpinRow>,
@@ -165,7 +178,30 @@ pub mod imp {
     }
 
     #[glib::derived_properties]
-    impl ObjectImpl for DanmakuPopover {}
+    impl ObjectImpl for DanmakuPopover {
+        fn constructed(&self) {
+            self.parent_constructed();
+
+            let obj = self.obj();
+            obj.rebuild_danmaku_server_list();
+            SETTINGS.connect_changed(
+                Some("danmaku-servers"),
+                glib::clone!(
+                    #[weak]
+                    obj,
+                    move |_, _| obj.rebuild_danmaku_server_list()
+                ),
+            );
+            SETTINGS.connect_changed(
+                Some("danmaku-active-server"),
+                glib::clone!(
+                    #[weak]
+                    obj,
+                    move |_, _| obj.refresh_danmaku_server_selection()
+                ),
+            );
+        }
+    }
 
     impl DanmakuPopover {
         fn set_status(&self, status: DanmakuPopoverStatus) {
@@ -188,7 +224,12 @@ pub mod imp {
         }
     }
 
-    impl WidgetImpl for DanmakuPopover {}
+    impl WidgetImpl for DanmakuPopover {
+        fn unmap(&self) {
+            self.danmaku_server_expander.set_expanded(false);
+            self.parent_unmap();
+        }
+    }
 
     impl BinImpl for DanmakuPopover {}
 }
@@ -254,6 +295,98 @@ impl DanmakuPopover {
             .bind_property("value", &danmakw, "shadow-offset")
             .flags(glib::BindingFlags::SYNC_CREATE)
             .build();
+    }
+
+    fn normalized_danmaku_server(&self, server_count: usize) -> i32 {
+        let active = SETTINGS.danmaku_active_server();
+        if active == -1 || usize::try_from(active).is_ok_and(|index| index < server_count) {
+            return active;
+        }
+
+        if SETTINGS.set_danmaku_active_server(-1).is_err() {
+            self.toast(gettext("Failed to select danmaku server."));
+        }
+        -1
+    }
+
+    fn danmaku_server_label(servers: &[DanmakuServer], active: i32) -> String {
+        usize::try_from(active)
+            .ok()
+            .and_then(|index| servers.get(index))
+            .map(|server| server.name.clone())
+            .unwrap_or_else(|| gettext(DEFAULT_DANMAKU_SERVER_LABEL))
+    }
+
+    fn update_danmaku_server_selection(&self, servers: &[DanmakuServer], active: i32) {
+        let imp = self.imp();
+        imp.danmaku_server_expander
+            .set_subtitle(&Self::danmaku_server_label(servers, active));
+        for (index, row) in imp.danmaku_server_rows.borrow().iter().enumerate() {
+            row.imp().check.set_active(index as i32 - 1 == active);
+        }
+    }
+
+    fn refresh_danmaku_server_selection(&self) {
+        let servers = SETTINGS.danmaku_servers();
+        let active = self.normalized_danmaku_server(servers.len());
+        self.update_danmaku_server_selection(&servers, active);
+    }
+
+    fn rebuild_danmaku_server_list(&self) {
+        let servers = SETTINGS.danmaku_servers();
+        let active = self.normalized_danmaku_server(servers.len());
+        let imp = self.imp();
+
+        for row in imp.danmaku_server_rows.borrow_mut().drain(..) {
+            imp.danmaku_server_expander.remove(&row);
+        }
+
+        let mut check_group: Option<gtk::CheckButton> = None;
+        let mut append_row = |label: String, server_index: i32| {
+            let row = CheckRow::new();
+            row.set_title(&label);
+
+            let check = row.imp().check.get();
+            if let Some(first_check) = check_group.as_ref() {
+                check.set_group(Some(first_check));
+            } else {
+                check_group = Some(check.clone());
+            }
+            check.set_active(active == server_index);
+
+            row.connect_activated(glib::clone!(
+                #[weak(rename_to = obj)]
+                self,
+                move |_| obj.select_danmaku_server(server_index)
+            ));
+            imp.danmaku_server_expander.add_row(&row);
+            imp.danmaku_server_rows.borrow_mut().push(row);
+        };
+
+        append_row(gettext(DEFAULT_DANMAKU_SERVER_LABEL), -1);
+        for (index, server) in servers.iter().enumerate() {
+            append_row(server.name.clone(), index as i32);
+        }
+        self.update_danmaku_server_selection(&servers, active);
+    }
+
+    fn select_danmaku_server(&self, active: i32) {
+        let servers = SETTINGS.danmaku_servers();
+        let current = self.normalized_danmaku_server(servers.len());
+        if SETTINGS.danmaku_active_server() == active {
+            self.update_danmaku_server_selection(&servers, current);
+            self.imp().danmaku_server_expander.set_expanded(false);
+            return;
+        }
+
+        if SETTINGS.set_danmaku_active_server(active).is_err() {
+            self.update_danmaku_server_selection(&servers, current);
+            self.toast(gettext("Failed to select danmaku server."));
+            return;
+        }
+
+        self.update_danmaku_server_selection(&servers, active);
+        self.imp().danmaku_server_expander.set_expanded(false);
     }
 
     pub fn set_enabled(&self, enabled: bool) {
