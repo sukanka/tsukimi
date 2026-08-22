@@ -1,6 +1,7 @@
 use std::{
     cell::{
         Cell,
+        OnceCell,
         RefCell,
     },
     collections::HashMap,
@@ -108,6 +109,8 @@ mod imp {
         pub episodes: RefCell<Vec<TuItem>>,
         pub candidate_episodes: RefCell<HashMap<String, Vec<SearchEpisodeDetails>>>,
         pub search_generation: Cell<u64>,
+        pub source_generation: Cell<u64>,
+        pub expected_item_id: OnceCell<String>,
     }
 
     #[glib::object_subclass]
@@ -155,7 +158,12 @@ impl DanmakuSearchDialog {
     pub fn new(page: &MPVPage) -> Self {
         let dialog: Self = glib::Object::new();
         dialog.imp().page.set(Some(page));
+        dialog
+            .imp()
+            .source_generation
+            .set(DanmakuClient::configuration_generation());
         if let Some(item) = dialog.prefill_from_current_video() {
+            let _ = dialog.imp().expected_item_id.set(item.id());
             dialog.load_tmdb_candidates(item);
         }
         dialog
@@ -185,6 +193,7 @@ impl DanmakuSearchDialog {
 
     fn is_current_search(&self, generation: u64) -> bool {
         self.imp().search_generation.get() == generation
+            && self.imp().source_generation.get() == DanmakuClient::configuration_generation()
     }
 
     fn load_tmdb_candidates(&self, item: TuItem) {
@@ -878,6 +887,12 @@ impl DanmakuSearchDialog {
     }
 
     pub fn apply_episode(&self, item: TuItem) {
+        if self.imp().source_generation.get() != DanmakuClient::configuration_generation() {
+            self.show_toast(gettext(
+                "The danmaku source changed. Reopen this dialog to search again.",
+            ));
+            return;
+        }
         let Ok(episode_id) = item.id().parse::<i64>() else {
             self.show_toast(gettext("Invalid episode ID"));
             return;
@@ -891,6 +906,17 @@ impl DanmakuSearchDialog {
             self.close();
             return;
         };
+        let Some(expected_item_id) = self.imp().expected_item_id.get() else {
+            self.close();
+            return;
+        };
+        if current_item.id() != *expected_item_id {
+            self.show_toast(gettext(
+                "The playing video changed. Reopen this dialog to search again.",
+            ));
+            return;
+        }
+        let expected_item_id = expected_item_id.clone();
         let available_episodes = self.imp().episodes.borrow().clone();
         let item_name = item.series_name().map_or_else(
             || item.name(),
@@ -901,7 +927,10 @@ impl DanmakuSearchDialog {
             #[weak(rename_to = obj)]
             self,
             async move {
-                match page.apply_manual_danmaku(episode_id, item_name).await {
+                match page
+                    .apply_manual_danmaku(&expected_item_id, episode_id, item_name)
+                    .await
+                {
                     Ok(true) => {
                         let mut cache = DanmakuCacheMap::load();
                         if let Err(error) = cache.remember_manual_selection(
