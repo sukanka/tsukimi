@@ -93,7 +93,7 @@ msgid "Compact"
 msgstr ""
 
 #: crates/tsukimi/resources/ui/account_settings.ui:133
-#: crates/tsukimi/resources/ui/danmaku_popover.ui:203
+#: crates/tsukimi/resources/ui/danmaku_popover.ui:217
 msgid "Full"
 msgstr ""
 
@@ -139,7 +139,7 @@ msgid "Background"
 msgstr ""
 
 #: crates/tsukimi/resources/ui/account_settings.ui:235
-#: crates/tsukimi/resources/ui/danmaku_popover.ui:127
+#: crates/tsukimi/resources/ui/danmaku_popover.ui:141
 msgid "Opacity"
 msgstr ""
 
@@ -244,7 +244,7 @@ msgstr ""
 #: crates/tsukimi/resources/ui/danmaku_popover.ui:14
 #: crates/tsukimi/resources/ui/danmaku_popover.ui:23
 #: crates/tsukimi/resources/ui/mpvpage.ui:395
-#: crates/tsukimi/src/ui/mpv/danmaku_popover.rs:44
+#: crates/tsukimi/src/ui/mpv/danmaku_popover.rs:54
 msgid "Danmaku"
 msgstr ""
 
@@ -267,6 +267,7 @@ msgid "Use Built-in Credentials"
 msgstr ""
 
 #: crates/tsukimi/resources/ui/account_settings.ui:509
+#: crates/tsukimi/resources/ui/danmaku_popover.ui:72
 msgid "Danmaku Servers"
 msgstr ""
 
@@ -275,6 +276,7 @@ msgid "Custom servers must implement the dandanplay API."
 msgstr ""
 
 #: crates/tsukimi/resources/ui/account_settings.ui:513
+#: crates/tsukimi/resources/ui/danmaku_popover.ui:75
 msgid "Active Server"
 msgstr ""
 
@@ -487,119 +489,119 @@ msgid "Play"
 msgstr ""
 
 #: crates/tsukimi/resources/ui/danmaku_popover.ui:35
-#: crates/tsukimi/src/ui/mpv/danmaku_popover.rs:60
+#: crates/tsukimi/src/ui/mpv/danmaku_popover.rs:70
 msgid "Disabled"
 msgstr ""
 
-#: crates/tsukimi/resources/ui/danmaku_popover.ui:76
+#: crates/tsukimi/resources/ui/danmaku_popover.ui:90
 msgid "Search Manually"
 msgstr ""
 
-#: crates/tsukimi/resources/ui/danmaku_popover.ui:94
-#: crates/tsukimi/resources/ui/danmaku_popover.ui:113
+#: crates/tsukimi/resources/ui/danmaku_popover.ui:108
+#: crates/tsukimi/resources/ui/danmaku_popover.ui:127
 msgid "Danmaku Settings"
 msgstr ""
 
-#: crates/tsukimi/resources/ui/danmaku_popover.ui:142
+#: crates/tsukimi/resources/ui/danmaku_popover.ui:156
 #: crates/tsukimi/resources/ui/mpv_control_sidebar.ui:447
 msgid "Speed"
 msgstr ""
 
-#: crates/tsukimi/resources/ui/danmaku_popover.ui:157
+#: crates/tsukimi/resources/ui/danmaku_popover.ui:171
 msgid "Font Size"
 msgstr ""
 
-#: crates/tsukimi/resources/ui/danmaku_popover.ui:172
+#: crates/tsukimi/resources/ui/danmaku_popover.ui:186
 msgid "Font Weight"
 msgstr ""
 
-#: crates/tsukimi/resources/ui/danmaku_popover.ui:177
+#: crates/tsukimi/resources/ui/danmaku_popover.ui:191
 msgid "Thin"
 msgstr ""
 
-#: crates/tsukimi/resources/ui/danmaku_popover.ui:178
+#: crates/tsukimi/resources/ui/danmaku_popover.ui:192
 msgid "Ultralight"
 msgstr ""
 
-#: crates/tsukimi/resources/ui/danmaku_popover.ui:179
+#: crates/tsukimi/resources/ui/danmaku_popover.ui:193
 msgid "Light"
 msgstr ""
 
-#: crates/tsukimi/resources/ui/danmaku_popover.ui:180
+#: crates/tsukimi/resources/ui/danmaku_popover.ui:194
 msgid "Semilight"
 msgstr ""
 
-#: crates/tsukimi/resources/ui/danmaku_popover.ui:181
+#: crates/tsukimi/resources/ui/danmaku_popover.ui:195
 msgid "Book"
 msgstr ""
 
-#: crates/tsukimi/resources/ui/danmaku_popover.ui:182
+#: crates/tsukimi/resources/ui/danmaku_popover.ui:196
 msgid "Normal"
 msgstr ""
 
-#: crates/tsukimi/resources/ui/danmaku_popover.ui:183
+#: crates/tsukimi/resources/ui/danmaku_popover.ui:197
 msgid "Medium"
 msgstr ""
 
-#: crates/tsukimi/resources/ui/danmaku_popover.ui:184
+#: crates/tsukimi/resources/ui/danmaku_popover.ui:198
 msgid "Semibold"
 msgstr ""
 
-#: crates/tsukimi/resources/ui/danmaku_popover.ui:185
+#: crates/tsukimi/resources/ui/danmaku_popover.ui:199
 msgid "Bold"
 msgstr ""
 
-#: crates/tsukimi/resources/ui/danmaku_popover.ui:186
+#: crates/tsukimi/resources/ui/danmaku_popover.ui:200
 msgid "Ultrabold"
 msgstr ""
 
-#: crates/tsukimi/resources/ui/danmaku_popover.ui:187
+#: crates/tsukimi/resources/ui/danmaku_popover.ui:201
 msgid "Heavy"
 msgstr ""
 
-#: crates/tsukimi/resources/ui/danmaku_popover.ui:188
+#: crates/tsukimi/resources/ui/danmaku_popover.ui:202
 msgid "Ultraheavy"
 msgstr ""
 
-#: crates/tsukimi/resources/ui/danmaku_popover.ui:196
+#: crates/tsukimi/resources/ui/danmaku_popover.ui:210
 msgid "Danmaku Intensity"
 msgstr ""
 
-#: crates/tsukimi/resources/ui/danmaku_popover.ui:201
+#: crates/tsukimi/resources/ui/danmaku_popover.ui:215
 msgid "Quarter"
 msgstr ""
 
-#: crates/tsukimi/resources/ui/danmaku_popover.ui:202
+#: crates/tsukimi/resources/ui/danmaku_popover.ui:216
 msgid "Half"
 msgstr ""
 
-#: crates/tsukimi/resources/ui/danmaku_popover.ui:204
+#: crates/tsukimi/resources/ui/danmaku_popover.ui:218
 msgid "Allow Overlay"
 msgstr ""
 
-#: crates/tsukimi/resources/ui/danmaku_popover.ui:212
+#: crates/tsukimi/resources/ui/danmaku_popover.ui:226
 msgid "Spacing"
 msgstr ""
 
-#: crates/tsukimi/resources/ui/danmaku_popover.ui:213
+#: crates/tsukimi/resources/ui/danmaku_popover.ui:227
 msgid "N x Font Size"
 msgstr ""
 
-#: crates/tsukimi/resources/ui/danmaku_popover.ui:228
+#: crates/tsukimi/resources/ui/danmaku_popover.ui:242
 msgid "Stroke Size"
 msgstr ""
 
-#: crates/tsukimi/resources/ui/danmaku_popover.ui:229
-#: crates/tsukimi/resources/ui/danmaku_popover.ui:245
+#: crates/tsukimi/resources/ui/danmaku_popover.ui:243
+#: crates/tsukimi/resources/ui/danmaku_popover.ui:259
 msgid "px"
 msgstr ""
 
-#: crates/tsukimi/resources/ui/danmaku_popover.ui:244
+#: crates/tsukimi/resources/ui/danmaku_popover.ui:258
 #: crates/tsukimi/resources/ui/mpv_control_sidebar.ui:326
 msgid "Shadow Offset"
 msgstr ""
 
-#: crates/tsukimi/resources/ui/danmaku_popover.ui:264
+#: crates/tsukimi/resources/ui/danmaku_popover.ui:278
 #: crates/tsukimi/resources/ui/media_viewer.ui:36
 #: crates/tsukimi/resources/ui/media_viewer.ui:38
 msgid "Back"
@@ -1858,45 +1860,51 @@ msgstr ""
 msgid "Deband settings cleared."
 msgstr ""
 
-#: crates/tsukimi/src/ui/mpv/danmaku_popover.rs:42
+#: crates/tsukimi/src/ui/mpv/danmaku_popover.rs:52
 #, rust-format
 msgid "{count} Danmaku Loaded"
 msgstr ""
 
-#: crates/tsukimi/src/ui/mpv/danmaku_popover.rs:50
+#: crates/tsukimi/src/ui/mpv/danmaku_popover.rs:60
 msgid "Searching"
 msgstr ""
 
-#: crates/tsukimi/src/ui/mpv/danmaku_popover.rs:51
+#: crates/tsukimi/src/ui/mpv/danmaku_popover.rs:61
 msgid "Loading"
 msgstr ""
 
-#: crates/tsukimi/src/ui/mpv/danmaku_popover.rs:55
+#: crates/tsukimi/src/ui/mpv/danmaku_popover.rs:65
 msgid "No danmaku found"
 msgstr ""
 
-#: crates/tsukimi/src/ui/mpv/danmaku_popover.rs:57
+#: crates/tsukimi/src/ui/mpv/danmaku_popover.rs:67
 msgid "This feature requires an official build"
 msgstr ""
 
-#: crates/tsukimi/src/ui/mpv/danmaku_popover.rs:59
+#: crates/tsukimi/src/ui/mpv/danmaku_popover.rs:69
 msgid "Not loaded"
 msgstr ""
 
-#: crates/tsukimi/src/ui/mpv/danmaku_popover.rs:61
+#: crates/tsukimi/src/ui/mpv/danmaku_popover.rs:71
 msgid "Maybe there is something wrong"
 msgstr ""
 
-#: crates/tsukimi/src/ui/mpv/danmaku_popover.rs:67
+#: crates/tsukimi/src/ui/mpv/danmaku_popover.rs:77
 msgid "From 弹弹play开放弹幕网络 (Auto Matched)"
 msgstr ""
 
-#: crates/tsukimi/src/ui/mpv/danmaku_popover.rs:69
+#: crates/tsukimi/src/ui/mpv/danmaku_popover.rs:79
 msgid "From 弹弹play开放弹幕网络 (Manually Matched)"
 msgstr ""
 
-#: crates/tsukimi/src/ui/mpv/danmaku_popover.rs:71
+#: crates/tsukimi/src/ui/mpv/danmaku_popover.rs:81
 msgid "From external danmaku track"
+msgstr ""
+
+#: crates/tsukimi/src/ui/mpv/danmaku_popover.rs:350
+#: crates/tsukimi/src/ui/mpv/danmaku_popover.rs:427
+#: crates/tsukimi/src/ui/widgets/account_settings.rs:962
+msgid "Failed to select danmaku server."
 msgstr ""
 
 #: crates/tsukimi/src/ui/mpv/danmaku_search_dialog.rs:740
@@ -2080,10 +2088,6 @@ msgstr ""
 
 #: crates/tsukimi/src/ui/widgets/account_settings.rs:884
 msgid "Built-in credentials restored; custom servers remain unsigned."
-msgstr ""
-
-#: crates/tsukimi/src/ui/widgets/account_settings.rs:962
-msgid "Failed to select danmaku server."
 msgstr ""
 
 #: crates/tsukimi/src/ui/widgets/account_settings.rs:979
