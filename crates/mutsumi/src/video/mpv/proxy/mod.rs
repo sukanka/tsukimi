@@ -2,20 +2,29 @@ mod dmabuf;
 mod drm;
 #[cfg(feature = "profiling")]
 pub mod profiling;
+mod shm;
 mod surface;
 mod xdg;
-mod shm;
 
 #[cfg(feature = "profiling")]
-pub use profiling::{ProxyProfilingGuard, start_proxy_profiling};
-pub use shm::{ShmFrame, ShmMemoryFormat};
+pub use profiling::{
+    ProxyProfilingGuard,
+    start_proxy_profiling,
+};
+pub use shm::{
+    ShmFrame,
+    ShmMemoryFormat,
+};
 
 use std::{
     cell::RefCell,
     collections::HashMap,
-    os::fd::{IntoRawFd, OwnedFd},
+    io,
+    os::fd::OwnedFd,
     rc::Rc,
     sync::Mutex,
+    thread::JoinHandle,
+    time::Duration,
 };
 
 use once_cell::sync::Lazy;
@@ -23,7 +32,11 @@ use wl_proxy::{
     baseline::Baseline,
     client::ClientHandler,
     global_mapper::GlobalMapper,
-    object::{Object, ObjectCoreApi, ObjectRcUtils},
+    object::{
+        Object,
+        ObjectCoreApi,
+        ObjectRcUtils,
+    },
     protocols::{
         ObjectInterface,
         drm::wl_drm::WlDrm,
@@ -36,25 +49,47 @@ use wl_proxy::{
         wayland::{
             wl_callback::WlCallback,
             wl_compositor::WlCompositor,
-            wl_display::{WlDisplay, WlDisplayHandler},
-            wl_registry::{WlRegistry, WlRegistryHandler},
-            wl_shm::{WlShm, WlShmFormat},
+            wl_display::{
+                WlDisplay,
+                WlDisplayHandler,
+            },
+            wl_registry::{
+                WlRegistry,
+                WlRegistryHandler,
+            },
+            wl_shm::{
+                WlShm,
+                WlShmFormat,
+            },
             wl_subcompositor::WlSubcompositor,
             wl_surface::WlSurface,
         },
         xdg_shell::xdg_wm_base::XdgWmBase,
     },
-    state::{Destructor, State},
+    state::{
+        Destructor,
+        State,
+    },
 };
 
 use self::{
-    dmabuf::{ALLOWED_FORMAT_PAIRS, BufferInfo, DmabufHandler},
+    dmabuf::{
+        ALLOWED_FORMAT_PAIRS,
+        BufferInfo,
+        DmabufHandler,
+    },
     drm::DrmHandler,
     shm::ShmHandler,
     surface::{
-        CompositorHandler, FractionalScaleManagerHandler, SubcompositorHandler, ViewporterHandler,
+        CompositorHandler,
+        FractionalScaleManagerHandler,
+        SubcompositorHandler,
+        ViewporterHandler,
     },
-    xdg::{ToplevelEntry, WmBaseHandler},
+    xdg::{
+        ToplevelEntry,
+        WmBaseHandler,
+    },
 };
 
 enum ProxyEvent {
@@ -181,10 +216,12 @@ impl SharedState {
 
 struct DisplayHandler {
     state: Rc<RefCell<SharedState>>,
+    connected_tx: flume::Sender<()>,
 }
 
 impl WlDisplayHandler for DisplayHandler {
     fn handle_get_registry(&mut self, slf: &Rc<WlDisplay>, registry: &Rc<WlRegistry>) {
+        let _ = self.connected_tx.try_send(());
         slf.send_get_registry(registry);
 
         let mut mapper = GlobalMapper::default();
@@ -218,11 +255,7 @@ struct RegistryHandler {
 
 impl WlRegistryHandler for RegistryHandler {
     fn handle_global(
-        &mut self,
-        slf: &Rc<WlRegistry>,
-        name: u32,
-        interface: ObjectInterface,
-        version: u32,
+        &mut self, slf: &Rc<WlRegistry>, name: u32, interface: ObjectInterface, version: u32,
     ) {
         if interface == ObjectInterface::XdgWmBase
             || interface == ObjectInterface::WpViewporter
@@ -338,9 +371,8 @@ fn handle_viewport_update(shared: &Rc<RefCell<SharedState>>, width: i32, height:
 }
 
 async fn run_client(
-    state: Rc<State>,
-    shared: Rc<RefCell<SharedState>>,
-    event_rx: flume::Receiver<ProxyEvent>,
+    state: Rc<State>, shared: Rc<RefCell<SharedState>>, event_rx: flume::Receiver<ProxyEvent>,
+    stop_rx: flume::Receiver<()>,
 ) {
     let poll_fd = match tokio::io::unix::AsyncFd::new(Rc::clone(state.poll_fd())) {
         Ok(fd) => fd,
@@ -382,62 +414,127 @@ async fn run_client(
                 }
                 Err(_) => return,
             },
+            _ = stop_rx.recv_async() => return,
         }
     }
 }
 
-fn serve_client(socket: OwnedFd, upstream: String) {
-    let state = match State::builder(Baseline::ALL_OF_THEM)
-        .with_server_display_name(&upstream)
-        .build()
-    {
-        Ok(state) => state,
-        Err(e) => {
-            tracing::error!("wl-proxy-mpv: failed to create state: {e}");
-            return;
-        }
-    };
-    let client = match state.add_client(&Rc::new(socket)) {
-        Ok(client) => client,
-        Err(e) => {
-            tracing::error!("wl-proxy-mpv: failed to add client: {e}");
-            return;
-        }
-    };
-    client.set_handler(ClientHandlerImpl {
-        _destructor: state.create_destructor(),
-    });
+fn serve_client(
+    socket: OwnedFd, upstream: String, connected_tx: flume::Sender<()>,
+    stop_rx: flume::Receiver<()>, ready_tx: std::sync::mpsc::SyncSender<io::Result<()>>,
+) {
+    let setup = (|| -> io::Result<_> {
+        let state = State::builder(Baseline::ALL_OF_THEM)
+            .with_server_display_name(&upstream)
+            .build()
+            .map_err(|e| io::Error::other(format!("failed to create Wayland state: {e}")))?;
+        let client = state
+            .add_client(&Rc::new(socket))
+            .map_err(|e| io::Error::other(format!("failed to add Wayland client: {e}")))?;
+        client.set_handler(ClientHandlerImpl {
+            _destructor: state.create_destructor(),
+        });
 
-    let (event_tx, event_rx) = flume::unbounded();
-    let shared = Rc::new(RefCell::new(SharedState {
-        buffer_info: HashMap::new(),
-        event_tx,
-        frame_callbacks: HashMap::new(),
-        next_callback_batch_id: 1,
-        toplevels: Vec::new(),
-        configure_serial: 1,
-        fractional_scales: Vec::new(),
-        surfaces: Vec::new(),
-        shm_buffer_info: HashMap::new(),
-    }));
-    client.display().set_handler(DisplayHandler {
-        state: Rc::clone(&shared),
-    });
+        let (event_tx, event_rx) = flume::unbounded();
+        let shared = Rc::new(RefCell::new(SharedState {
+            buffer_info: HashMap::new(),
+            event_tx,
+            frame_callbacks: HashMap::new(),
+            next_callback_batch_id: 1,
+            toplevels: Vec::new(),
+            configure_serial: 1,
+            fractional_scales: Vec::new(),
+            surfaces: Vec::new(),
+            shm_buffer_info: HashMap::new(),
+        }));
+        client.display().set_handler(DisplayHandler {
+            state: Rc::clone(&shared),
+            connected_tx,
+        });
 
-    let runtime = match tokio::runtime::Builder::new_current_thread()
-        .enable_io()
-        .build()
-    {
-        Ok(runtime) => runtime,
-        Err(e) => {
-            tracing::error!("wl-proxy-mpv: failed to create runtime: {e}");
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_io()
+            .build()
+            .map_err(|e| io::Error::other(format!("failed to create runtime: {e}")))?;
+
+        Ok((state, shared, event_rx, runtime))
+    })();
+
+    let (state, shared, event_rx, runtime) = match setup {
+        Ok(setup) => setup,
+        Err(error) => {
+            let _ = ready_tx.send(Err(error));
             return;
         }
     };
-    runtime.block_on(run_client(state, shared, event_rx));
+
+    if ready_tx.send(Ok(())).is_err() {
+        return;
+    }
+
+    runtime.block_on(run_client(state, shared, event_rx, stop_rx));
 }
 
-static PROXY_ARMED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+#[must_use = "keep the proxy connection alive while mpv owns its client fd"]
+pub(crate) struct ProxyConnection {
+    client_fd: Option<OwnedFd>,
+    connected_rx: flume::Receiver<()>,
+    stop_tx: Option<flume::Sender<()>>,
+    join: Option<JoinHandle<()>>,
+}
+
+impl ProxyConnection {
+    pub(crate) fn take_client_fd(&mut self) -> Option<OwnedFd> {
+        self.client_fd.take()
+    }
+
+    pub(crate) fn wait_until_connected(&self, timeout: Duration) -> io::Result<()> {
+        match self.connected_rx.recv_timeout(timeout) {
+            Ok(()) => Ok(()),
+            Err(flume::RecvTimeoutError::Timeout) => Err(io::Error::new(
+                io::ErrorKind::TimedOut,
+                "mpv did not connect to the Wayland proxy before the timeout",
+            )),
+            Err(flume::RecvTimeoutError::Disconnected) => Err(io::Error::new(
+                io::ErrorKind::ConnectionAborted,
+                "the Wayland proxy exited before mpv connected",
+            )),
+        }
+    }
+
+    pub(crate) fn is_finished(&self) -> bool {
+        self.join.as_ref().is_none_or(JoinHandle::is_finished)
+    }
+
+    fn stop(&mut self) {
+        drop(self.client_fd.take());
+        if let Some(stop_tx) = self.stop_tx.take() {
+            let _ = stop_tx.try_send(());
+        }
+        if let Some(join) = self.join.take() {
+            join_in_background(join);
+        }
+    }
+}
+
+impl Drop for ProxyConnection {
+    fn drop(&mut self) {
+        self.stop();
+    }
+}
+
+fn join_in_background(join: JoinHandle<()>) {
+    if let Err(error) = std::thread::Builder::new()
+        .name("wl-proxy-mpv-cleanup".into())
+        .spawn(move || {
+            if join.join().is_err() {
+                tracing::error!("wl-proxy-mpv: proxy thread panicked while stopping");
+            }
+        })
+    {
+        tracing::warn!("wl-proxy-mpv: failed to spawn cleanup thread: {error}");
+    }
+}
 
 pub fn create_mpv_proxy(format_pairs: Vec<(u32, u64)>) {
     ALLOWED_FORMAT_PAIRS
@@ -445,40 +542,44 @@ pub fn create_mpv_proxy(format_pairs: Vec<(u32, u64)>) {
         .ok();
 }
 
-pub fn arm_mpv_proxy() {
-    use std::sync::atomic::Ordering;
+pub(crate) fn start_mpv_proxy() -> io::Result<ProxyConnection> {
+    let upstream = std::env::var("WAYLAND_DISPLAY").map_err(|error| {
+        io::Error::new(
+            io::ErrorKind::NotFound,
+            format!("WAYLAND_DISPLAY is unavailable: {error}"),
+        )
+    })?;
+    let (client, server) = std::os::unix::net::UnixStream::pair()?;
+    let client_fd = OwnedFd::from(client);
+    let server_fd = OwnedFd::from(server);
+    let (connected_tx, connected_rx) = flume::bounded(1);
+    let (stop_tx, stop_rx) = flume::bounded(1);
+    let (ready_tx, ready_rx) = std::sync::mpsc::sync_channel(1);
 
-    if PROXY_ARMED
-        .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
-        .is_err()
-    {
-        return;
-    }
-
-    let upstream = match std::env::var("WAYLAND_DISPLAY") {
-        Ok(upstream) => upstream,
-        Err(_) => {
-            PROXY_ARMED.store(false, Ordering::SeqCst);
-            return;
-        }
-    };
-
-    let Ok((client, server)) = std::os::unix::net::UnixStream::pair() else {
-        PROXY_ARMED.store(false, Ordering::SeqCst);
-        return;
-    };
-
-    let result = std::thread::Builder::new()
+    let join = std::thread::Builder::new()
         .name("wl-proxy-mpv".into())
         .spawn(move || {
-            serve_client(server.into(), upstream);
-            PROXY_ARMED.store(false, Ordering::SeqCst);
-        });
+            serve_client(server_fd, upstream, connected_tx, stop_rx, ready_tx);
+        })?;
 
-    if result.is_err() {
-        PROXY_ARMED.store(false, Ordering::SeqCst);
-        return;
+    match ready_rx.recv() {
+        Ok(Ok(())) => Ok(ProxyConnection {
+            client_fd: Some(client_fd),
+            connected_rx,
+            stop_tx: Some(stop_tx),
+            join: Some(join),
+        }),
+        Ok(Err(error)) => {
+            let _ = stop_tx.try_send(());
+            join_in_background(join);
+            Err(error)
+        }
+        Err(error) => {
+            let _ = stop_tx.try_send(());
+            join_in_background(join);
+            Err(io::Error::other(format!(
+                "Wayland proxy thread exited before initialization completed: {error}"
+            )))
+        }
     }
-
-    unsafe { std::env::set_var("WAYLAND_SOCKET", client.into_raw_fd().to_string()) };
 }
