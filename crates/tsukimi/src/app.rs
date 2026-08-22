@@ -75,18 +75,33 @@ mod imp {
             );
 
             configure_danmaku_client();
+            let obj = self.obj();
             for key in [
                 "danmaku-appid",
                 "danmaku-appsecret",
                 "danmaku-servers",
                 "danmaku-active-server",
             ] {
-                SETTINGS.connect_changed(Some(key), move |_, _| configure_danmaku_client());
+                SETTINGS.connect_changed(
+                    Some(key),
+                    glib::clone!(
+                        #[weak]
+                        obj,
+                        move |_, _| {
+                            if configure_danmaku_client() {
+                                for window in obj.windows() {
+                                    if let Ok(window) = window.downcast::<crate::Window>() {
+                                        window.danmaku_source_changed();
+                                    }
+                                }
+                            }
+                        }
+                    ),
+                );
             }
 
             configure_mpv();
 
-            let obj = self.obj();
             obj.set_application_id(Some(crate::APP_ID));
             obj.set_resource_base_path(Some(crate::APP_RESOURCE_PATH));
 
@@ -165,18 +180,22 @@ mod imp {
         }
     }
 
-    fn configure_danmaku_client() {
+    fn configure_danmaku_client() -> bool {
         let servers = SETTINGS.danmaku_servers();
         let base_url = usize::try_from(SETTINGS.danmaku_active_server())
             .ok()
             .and_then(|index| servers.get(index))
             .map(|server| server.url.as_str());
-        if let Err(error) = DanmakuClient::configure(
+        match DanmakuClient::configure(
             &SETTINGS.danmaku_app_id(),
             &SETTINGS.danmaku_app_secret(),
             base_url,
         ) {
-            tracing::warn!("Ignoring invalid danmaku source configuration: {error}");
+            Ok(()) => true,
+            Err(error) => {
+                tracing::warn!("Ignoring invalid danmaku source configuration: {error}");
+                false
+            }
         }
     }
 

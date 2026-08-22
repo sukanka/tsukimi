@@ -2,6 +2,10 @@ use std::{
     sync::{
         LazyLock,
         RwLock,
+        atomic::{
+            AtomicU64,
+            Ordering,
+        },
     },
     time::{
         Duration,
@@ -230,10 +234,20 @@ impl DanmakuClientConfig {
             credentials,
         })
     }
+
+    fn source_fingerprint(&self) -> String {
+        let app_id = match &self.credentials {
+            DanmakuCredentials::BuiltIn => DEFAULT_DANMAKU_APP_ID,
+            DanmakuCredentials::Anonymous => "anonymous",
+            DanmakuCredentials::Custom { app_id, .. } => app_id,
+        };
+        format!("{}|{app_id}", self.base_url)
+    }
 }
 
 static CONFIG: LazyLock<RwLock<DanmakuClientConfig>> =
     LazyLock::new(|| RwLock::new(DanmakuClientConfig::default()));
+static CONFIG_GENERATION: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Clone)]
 struct RequestSigner {
@@ -290,7 +304,19 @@ impl DanmakuClient {
         *CONFIG
             .write()
             .map_err(|_| anyhow::anyhow!("Danmaku configuration lock is poisoned"))? = config;
+        CONFIG_GENERATION.fetch_add(1, Ordering::AcqRel);
         Ok(())
+    }
+
+    pub fn configuration_generation() -> u64 {
+        CONFIG_GENERATION.load(Ordering::Acquire)
+    }
+
+    pub fn source_fingerprint() -> String {
+        CONFIG
+            .read()
+            .map(|config| config.source_fingerprint())
+            .unwrap_or_else(|_| DEFAULT_DANMAKU_SERVER_URL.to_string())
     }
 
     pub fn new() -> anyhow::Result<Self> {
