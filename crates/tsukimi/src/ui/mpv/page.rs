@@ -1072,8 +1072,15 @@ impl MPVPage {
     }
 
     pub async fn apply_manual_danmaku(
-        &self, client: DanmakuClient, episode_id: i64, item_name: String,
+        &self, client: DanmakuClient, expected_item_id: &str, episode_id: i64, item_name: String,
     ) -> anyhow::Result<bool> {
+        if self
+            .current_video()
+            .as_ref()
+            .is_none_or(|item| item.id() != expected_item_id)
+        {
+            anyhow::bail!("The playing video changed before loading danmaku");
+        }
         self.apply_danmaku_episode(client, episode_id, item_name, true, "manual")
             .await
     }
@@ -1172,6 +1179,26 @@ impl MPVPage {
                 self.clear_danmaku(DanmakuPopoverStatus::SecretNotExist);
                 None
             }
+        }
+    }
+
+    pub fn danmaku_source_changed(&self) {
+        if self.has_external_danmaku_source() {
+            return;
+        }
+
+        let enabled = self.imp().danmaku_popover_content.enabled();
+        self.next_danmaku_generation();
+        self.clear_danmaku(if enabled {
+            DanmakuPopoverStatus::Searching
+        } else {
+            DanmakuPopoverStatus::Disabled
+        });
+        if enabled
+            && let Some(item) = self.current_video()
+            && let Some(client) = self.new_danmaku_client()
+        {
+            self.auto_search_danmaku(client, &item);
         }
     }
 
