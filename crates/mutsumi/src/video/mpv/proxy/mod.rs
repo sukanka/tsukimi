@@ -24,7 +24,6 @@ use std::{
     rc::Rc,
     sync::Mutex,
     thread::JoinHandle,
-    time::Duration,
 };
 
 use once_cell::sync::Lazy;
@@ -216,12 +215,12 @@ impl SharedState {
 
 struct DisplayHandler {
     state: Rc<RefCell<SharedState>>,
-    connected_tx: flume::Sender<()>,
+    lifecycle_tx: flume::Sender<ProxyLifecycleEvent>,
 }
 
 impl WlDisplayHandler for DisplayHandler {
     fn handle_get_registry(&mut self, slf: &Rc<WlDisplay>, registry: &Rc<WlRegistry>) {
-        let _ = self.connected_tx.try_send(());
+        let _ = self.lifecycle_tx.send(ProxyLifecycleEvent::Connected);
         slf.send_get_registry(registry);
 
         let mut mapper = GlobalMapper::default();
@@ -420,7 +419,7 @@ async fn run_client(
 }
 
 fn serve_client(
-    socket: OwnedFd, upstream: String, connected_tx: flume::Sender<()>,
+    socket: OwnedFd, upstream: String, lifecycle_tx: flume::Sender<ProxyLifecycleEvent>,
     stop_rx: flume::Receiver<()>, ready_tx: std::sync::mpsc::SyncSender<io::Result<()>>,
 ) {
     let setup = (|| -> io::Result<_> {
@@ -449,7 +448,7 @@ fn serve_client(
         }));
         client.display().set_handler(DisplayHandler {
             state: Rc::clone(&shared),
-            connected_tx,
+            lifecycle_tx,
         });
 
         let runtime = tokio::runtime::Builder::new_current_thread()
@@ -472,13 +471,28 @@ fn serve_client(
         return;
     }
 
-    runtime.block_on(run_client(state, shared, event_rx, stop_rx));
+    runtime.block_on(run_client(Rc::clone(&state), shared, event_rx, stop_rx));
+    state.destroy();
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ProxyLifecycleEvent {
+    Connected,
+    Disconnected,
+}
+
+struct DisconnectNotifier(flume::Sender<ProxyLifecycleEvent>);
+
+impl Drop for DisconnectNotifier {
+    fn drop(&mut self) {
+        let _ = self.0.send(ProxyLifecycleEvent::Disconnected);
+    }
 }
 
 #[must_use = "keep the proxy connection alive while mpv owns its client fd"]
 pub(crate) struct ProxyConnection {
     client_fd: Option<OwnedFd>,
-    connected_rx: flume::Receiver<()>,
+    lifecycle_rx: flume::Receiver<ProxyLifecycleEvent>,
     stop_tx: Option<flume::Sender<()>>,
     join: Option<JoinHandle<()>>,
 }
@@ -488,22 +502,8 @@ impl ProxyConnection {
         self.client_fd.take()
     }
 
-    pub(crate) fn wait_until_connected(&self, timeout: Duration) -> io::Result<()> {
-        match self.connected_rx.recv_timeout(timeout) {
-            Ok(()) => Ok(()),
-            Err(flume::RecvTimeoutError::Timeout) => Err(io::Error::new(
-                io::ErrorKind::TimedOut,
-                "mpv did not connect to the Wayland proxy before the timeout",
-            )),
-            Err(flume::RecvTimeoutError::Disconnected) => Err(io::Error::new(
-                io::ErrorKind::ConnectionAborted,
-                "the Wayland proxy exited before mpv connected",
-            )),
-        }
-    }
-
-    pub(crate) fn is_finished(&self) -> bool {
-        self.join.as_ref().is_none_or(JoinHandle::is_finished)
+    pub(crate) fn lifecycle_events(&self) -> &flume::Receiver<ProxyLifecycleEvent> {
+        &self.lifecycle_rx
     }
 
     fn stop(&mut self) {
@@ -552,20 +552,21 @@ pub(crate) fn start_mpv_proxy() -> io::Result<ProxyConnection> {
     let (client, server) = std::os::unix::net::UnixStream::pair()?;
     let client_fd = OwnedFd::from(client);
     let server_fd = OwnedFd::from(server);
-    let (connected_tx, connected_rx) = flume::bounded(1);
+    let (lifecycle_tx, lifecycle_rx) = flume::unbounded();
     let (stop_tx, stop_rx) = flume::bounded(1);
     let (ready_tx, ready_rx) = std::sync::mpsc::sync_channel(1);
 
     let join = std::thread::Builder::new()
         .name("wl-proxy-mpv".into())
         .spawn(move || {
-            serve_client(server_fd, upstream, connected_tx, stop_rx, ready_tx);
+            let _disconnect = DisconnectNotifier(lifecycle_tx.clone());
+            serve_client(server_fd, upstream, lifecycle_tx, stop_rx, ready_tx);
         })?;
 
     match ready_rx.recv() {
         Ok(Ok(())) => Ok(ProxyConnection {
             client_fd: Some(client_fd),
-            connected_rx,
+            lifecycle_rx,
             stop_tx: Some(stop_tx),
             join: Some(join),
         }),
@@ -581,5 +582,34 @@ pub(crate) fn start_mpv_proxy() -> io::Result<ProxyConnection> {
                 "Wayland proxy thread exited before initialization completed: {error}"
             )))
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        DisconnectNotifier,
+        ProxyLifecycleEvent,
+    };
+
+    #[test]
+    fn worker_exit_always_emits_disconnected() {
+        let (tx, rx) = flume::unbounded();
+        drop(DisconnectNotifier(tx));
+
+        assert_eq!(
+            rx.recv().expect("disconnect event"),
+            ProxyLifecycleEvent::Disconnected
+        );
+    }
+
+    #[test]
+    fn connected_then_disconnected_events_preserve_order() {
+        let (tx, rx) = flume::unbounded();
+        tx.send(ProxyLifecycleEvent::Connected).unwrap();
+        drop(DisconnectNotifier(tx));
+
+        assert_eq!(rx.recv().unwrap(), ProxyLifecycleEvent::Connected);
+        assert_eq!(rx.recv().unwrap(), ProxyLifecycleEvent::Disconnected);
     }
 }

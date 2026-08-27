@@ -1,9 +1,16 @@
 use std::{
+    collections::VecDeque,
+    ffi::OsString,
     ops::Deref,
-    os::fd::IntoRawFd,
+    os::fd::{
+        IntoRawFd,
+        OwnedFd,
+        RawFd,
+    },
     sync::{
         Arc,
         Mutex,
+        MutexGuard,
         OnceLock,
     },
 };
@@ -14,12 +21,14 @@ use super::{
     logging,
     proxy::{
         ProxyConnection,
+        ProxyLifecycleEvent,
         start_mpv_proxy,
     },
     *,
 };
 use flume::{
     Receiver,
+    Selector,
     Sender,
     unbounded,
 };
@@ -40,6 +49,234 @@ type MpvInitializer =
 
 static MPV_INITIALIZER: OnceLock<Box<MpvInitializer>> = OnceLock::new();
 static WAYLAND_HANDOFF_LOCK: Mutex<()> = Mutex::new(());
+// Async property replies share mpv's event FIFO with StartFile/EndFile/Idle,
+// so this token acts as a generation fence before an old proxy is discarded.
+const IDLE_FENCE_REPLY: u64 = u64::MAX;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum WaylandProxyPhase {
+    Pending,
+    Active,
+}
+
+impl WaylandProxyPhase {
+    fn transition(self, event: ProxyLifecycleEvent) -> Option<Self> {
+        match event {
+            ProxyLifecycleEvent::Connected => Some(Self::Active),
+            ProxyLifecycleEvent::Disconnected => None,
+        }
+    }
+
+    fn survives_idle(
+        self, has_current_vo: bool, handoff_is_published: bool, has_deferred_start: bool,
+    ) -> bool {
+        has_current_vo || (self == Self::Pending && handoff_is_published && has_deferred_start)
+    }
+}
+
+struct WaylandSocketHandoff {
+    previous: Option<OsString>,
+    installed: OsString,
+    raw_fd: Option<RawFd>,
+    guard: Option<MutexGuard<'static, ()>>,
+}
+
+impl WaylandSocketHandoff {
+    fn publish(client_fd: OwnedFd) -> Self {
+        // WAYLAND_SOCKET is process-global. Keep this lock until libwayland
+        // consumes the descriptor, which is signalled by get_registry.
+        let guard = WAYLAND_HANDOFF_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let previous = std::env::var_os("WAYLAND_SOCKET");
+        let raw_fd = client_fd.into_raw_fd();
+        let installed = OsString::from(raw_fd.to_string());
+        unsafe { std::env::set_var("WAYLAND_SOCKET", &installed) };
+
+        Self {
+            previous,
+            installed,
+            raw_fd: Some(raw_fd),
+            guard: Some(guard),
+        }
+    }
+
+    fn rollback(mut self) {
+        self.restore_environment();
+        if let Some(raw_fd) = self.raw_fd.take() {
+            unsafe { libc::close(raw_fd) };
+        }
+    }
+
+    fn is_published(&self) -> bool {
+        std::env::var_os("WAYLAND_SOCKET").as_ref() == Some(&self.installed)
+    }
+
+    fn restore_environment(&mut self) {
+        let Some(guard) = self.guard.take() else {
+            return;
+        };
+
+        let current = std::env::var_os("WAYLAND_SOCKET");
+        if current.is_none() || current.as_ref() == Some(&self.installed) {
+            match self.previous.take() {
+                Some(previous) => unsafe { std::env::set_var("WAYLAND_SOCKET", previous) },
+                None => unsafe { std::env::remove_var("WAYLAND_SOCKET") },
+            }
+        } else {
+            tracing::warn!(
+                target: "mutsumi::mpv",
+                "WAYLAND_SOCKET changed during the mpv proxy handoff; preserving the newer value"
+            );
+        }
+
+        drop(guard);
+    }
+}
+
+impl Drop for WaylandSocketHandoff {
+    fn drop(&mut self) {
+        self.restore_environment();
+        // Once mpv accepts the command, ownership of this fd is ambiguous
+        // until libwayland consumes it. Closing it here could race with mpv.
+    }
+}
+
+struct WaylandProxy {
+    connection: ProxyConnection,
+    phase: WaylandProxyPhase,
+    handoff: Option<WaylandSocketHandoff>,
+}
+
+impl WaylandProxy {
+    fn pending(connection: ProxyConnection, handoff: WaylandSocketHandoff) -> Self {
+        Self {
+            connection,
+            phase: WaylandProxyPhase::Pending,
+            handoff: Some(handoff),
+        }
+    }
+
+    fn event_rx(&self) -> &Receiver<ProxyLifecycleEvent> {
+        self.connection.lifecycle_events()
+    }
+
+    fn mark_connected(&mut self) {
+        self.phase = self
+            .phase
+            .transition(ProxyLifecycleEvent::Connected)
+            .expect("a connection event keeps the proxy alive");
+        drop(self.handoff.take());
+    }
+
+    fn cancel_if_unclaimed(mut self) {
+        if let Some(handoff) = self.handoff.take()
+            && handoff.is_published()
+        {
+            handoff.rollback();
+        }
+    }
+}
+
+enum ActorInput {
+    Control(Result<MpvMessage, flume::RecvError>),
+    Proxy(Result<ProxyLifecycleEvent, flume::RecvError>),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PlaybackLifecycle {
+    Idle,
+    StartingFromIdle,
+    StartingFromPlayback,
+    Active,
+    Ended,
+}
+
+impl PlaybackLifecycle {
+    fn start_requested(self) -> Self {
+        match self {
+            Self::Idle | Self::StartingFromIdle => Self::StartingFromIdle,
+            Self::StartingFromPlayback | Self::Active | Self::Ended => Self::StartingFromPlayback,
+        }
+    }
+
+    fn can_finish_at_fence_reply(self) -> bool {
+        matches!(self, Self::Idle | Self::StartingFromIdle)
+    }
+
+    fn is_playing_or_starting(self) -> bool {
+        matches!(
+            self,
+            Self::StartingFromIdle | Self::StartingFromPlayback | Self::Active
+        )
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum IdleCleanup {
+    Ready,
+    AwaitingFence,
+    AwaitingIdle,
+}
+
+impl IdleCleanup {
+    fn begin(&mut self) {
+        if *self == Self::Ready {
+            *self = Self::AwaitingFence;
+        }
+    }
+
+    fn fence_reply(&mut self, playback: PlaybackLifecycle) -> bool {
+        if *self != Self::AwaitingFence {
+            return false;
+        }
+
+        if playback.can_finish_at_fence_reply() {
+            *self = Self::Ready;
+            true
+        } else {
+            *self = Self::AwaitingIdle;
+            false
+        }
+    }
+
+    fn finish_idle(&mut self, playback: PlaybackLifecycle) -> bool {
+        match *self {
+            Self::AwaitingIdle => {
+                *self = Self::Ready;
+                true
+            }
+            Self::Ready => !playback.is_playing_or_starting(),
+            Self::AwaitingFence => false,
+        }
+    }
+
+    fn should_defer(self, message: &MpvMessage) -> bool {
+        if self == Self::Ready {
+            return false;
+        }
+
+        match message {
+            MpvMessage::GetProperty { .. }
+            | MpvMessage::InitRenderContext(_)
+            | MpvMessage::StartFile
+            | MpvMessage::EndFile
+            | MpvMessage::Idle
+            | MpvMessage::FenceReply(_)
+            | MpvMessage::Shutdown => false,
+            MpvMessage::Command { cmd, .. } if cmd == "quit" => false,
+            _ => true,
+        }
+    }
+}
+
+fn mark_file_start_requested(playback: &mut PlaybackLifecycle) {
+    *playback = playback.start_requested();
+}
+
+fn mark_file_started(playback: &mut PlaybackLifecycle) {
+    *playback = PlaybackLifecycle::Active;
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 #[error("the mpv initializer has already been set")]
@@ -149,6 +386,10 @@ pub enum MpvMessage {
         tx: tokio::sync::oneshot::Sender<MpvValue>,
     },
     InitRenderContext(tokio::sync::oneshot::Sender<Arc<Mpv>>),
+    StartFile,
+    EndFile,
+    Idle,
+    FenceReply(u64),
     Shutdown,
 }
 
@@ -208,6 +449,10 @@ impl MpvActor {
         tracing::debug!(target: "mutsumi::mpv", "mpv instance initialized");
 
         mpv.disable_deprecated_events()?;
+        // MPV_EVENT_IDLE is emitted after stop has finished deciding whether
+        // to retain or destroy the VO, making it a lifecycle barrier for the
+        // Wayland proxy. libmpv2 exposes this deprecated event as raw data.
+        mpv.enable_event(libmpv2_sys::mpv_event_id_MPV_EVENT_IDLE)?;
 
         mpv.observe_property("duration", Format::Double, 0)?;
         mpv.observe_property("pause", Format::Flag, 1)?;
@@ -237,31 +482,57 @@ impl MpvActor {
             .expect("Failed to spawn mpv event thread");
 
         spawn_tokio_blocking(move || {
-            let mut proxy: Option<ProxyConnection> = None;
-            let mut proxy_needs_revalidation = false;
+            let mut proxy: Option<WaylandProxy> = None;
+            let mut playback_lifecycle = PlaybackLifecycle::Idle;
+            let mut idle_cleanup = IdleCleanup::Ready;
+            let mut deferred_messages = VecDeque::new();
+            let mut replay = VecDeque::new();
 
             loop {
-                let Ok(msg) = MPV_CTRL.rx.recv() else {
-                    continue;
+                let msg = match replay.pop_front() {
+                    Some(msg) => {
+                        drain_proxy_events(&mut proxy);
+                        msg
+                    }
+                    None => match receive_actor_input(proxy.as_ref()) {
+                        ActorInput::Control(Ok(msg)) => {
+                            // Prefer a queued disconnect over reusing a dead proxy.
+                            drain_proxy_events(&mut proxy);
+                            msg
+                        }
+                        ActorInput::Control(Err(_)) => break,
+                        ActorInput::Proxy(event) => {
+                            handle_proxy_event(&mut proxy, event);
+                            continue;
+                        }
+                    },
                 };
+
+                if should_defer_start_until_idle(playback_lifecycle, idle_cleanup, &msg)
+                    || idle_cleanup.should_defer(&msg)
+                {
+                    deferred_messages.push_back(msg);
+                    continue;
+                }
 
                 match msg {
                     MpvMessage::Command { cmd, args } => {
                         let args_ref: Vec<&str> = args.iter().map(String::as_str).collect();
+                        let needs_idle_barrier = cmd == "stop"
+                            && proxy.is_some()
+                            && playback_lifecycle != PlaybackLifecycle::Idle;
                         let result = mpv.command(&cmd, &args_ref);
-                        if cmd == "stop" && result.is_ok() {
-                            proxy_needs_revalidation = true;
+                        if needs_idle_barrier && result.is_ok() {
+                            begin_idle_cleanup(&mpv, &mut idle_cleanup);
                         }
                     }
                     MpvMessage::WaylandCommand { cmd, args } => {
                         let args_ref: Vec<&str> = args.iter().map(String::as_str).collect();
-                        run_wayland_command(
-                            &mpv,
-                            &mut proxy,
-                            &mut proxy_needs_revalidation,
-                            &cmd,
-                            &args_ref,
-                        );
+                        if run_wayland_command(&mpv, &mut proxy, &cmd, &args_ref)
+                            && cmd == "loadfile"
+                        {
+                            mark_file_start_requested(&mut playback_lifecycle);
+                        }
                     }
                     MpvMessage::SetPlaylistPos(pos) => {
                         let playlist_count = mpv
@@ -272,17 +543,21 @@ impl MpvActor {
 
                         if starts_file {
                             let pos = pos.to_string();
-                            run_wayland_command(
+                            if run_wayland_command(
                                 &mpv,
                                 &mut proxy,
-                                &mut proxy_needs_revalidation,
                                 "set",
                                 &["playlist-pos", pos.as_str()],
-                            );
+                            ) {
+                                mark_file_start_requested(&mut playback_lifecycle);
+                            }
                         } else {
+                            let needs_idle_barrier = (pos < 0 || pos >= playlist_count)
+                                && proxy.is_some()
+                                && playback_lifecycle != PlaybackLifecycle::Idle;
                             let result = mpv.set_property("playlist-pos", pos);
-                            if result.is_ok() && (pos < 0 || pos >= playlist_count) {
-                                proxy_needs_revalidation = true;
+                            if needs_idle_barrier && result.is_ok() {
+                                begin_idle_cleanup(&mpv, &mut idle_cleanup);
                             }
                         }
                     }
@@ -301,7 +576,48 @@ impl MpvActor {
                     MpvMessage::InitRenderContext(tx) => {
                         let _ = tx.send(Arc::clone(&mpv.mpv));
                     }
-                    MpvMessage::Shutdown => break,
+                    MpvMessage::StartFile => {
+                        mark_file_started(&mut playback_lifecycle);
+                        if idle_cleanup == IdleCleanup::Ready {
+                            replay.append(&mut deferred_messages);
+                        }
+                    }
+                    MpvMessage::EndFile => {
+                        playback_lifecycle = PlaybackLifecycle::Ended;
+                    }
+                    MpvMessage::Idle => {
+                        if idle_cleanup == IdleCleanup::AwaitingFence {
+                            // Record the latest lifecycle state, but wait for
+                            // the FIFO lifecycle fence before releasing loads.
+                            playback_lifecycle = PlaybackLifecycle::Idle;
+                        } else if idle_cleanup.finish_idle(playback_lifecycle) {
+                            complete_idle_cleanup(
+                                &mpv,
+                                &mut proxy,
+                                &mut playback_lifecycle,
+                                &mut deferred_messages,
+                                &mut replay,
+                            );
+                        }
+                    }
+                    MpvMessage::FenceReply(reply) => {
+                        if reply == IDLE_FENCE_REPLY && idle_cleanup.fence_reply(playback_lifecycle)
+                        {
+                            complete_idle_cleanup(
+                                &mpv,
+                                &mut proxy,
+                                &mut playback_lifecycle,
+                                &mut deferred_messages,
+                                &mut replay,
+                            );
+                        }
+                    }
+                    MpvMessage::Shutdown => {
+                        if let Some(proxy) = proxy.take() {
+                            proxy.cancel_if_unclaimed();
+                        }
+                        break;
+                    }
                 }
             }
         });
@@ -367,114 +683,394 @@ impl MpvActor {
     }
 }
 
-fn run_wayland_command(
-    mpv: &Mpv, proxy: &mut Option<ProxyConnection>, proxy_needs_revalidation: &mut bool,
-    command: &str, args: &[&str],
+fn receive_actor_input(proxy: Option<&WaylandProxy>) -> ActorInput {
+    match proxy {
+        Some(proxy) => Selector::new()
+            .recv(&MPV_CTRL.rx, ActorInput::Control)
+            .recv(proxy.event_rx(), ActorInput::Proxy)
+            .wait(),
+        None => ActorInput::Control(MPV_CTRL.rx.recv()),
+    }
+}
+
+fn requests_file_start(message: &MpvMessage) -> bool {
+    matches!(
+        message,
+        MpvMessage::WaylandCommand { cmd, .. } if cmd == "loadfile"
+    ) || matches!(message, MpvMessage::SetPlaylistPos(0..))
+}
+
+fn has_deferred_file_start(mpv: &Mpv, messages: &VecDeque<MpvMessage>) -> bool {
+    let playlist_count = mpv
+        .get_property::<i64>("playlist-count")
+        .unwrap_or(i64::MAX);
+
+    messages.iter().any(|message| match message {
+        MpvMessage::WaylandCommand { cmd, .. } => cmd == "loadfile",
+        MpvMessage::SetPlaylistPos(pos) => *pos >= 0 && *pos < playlist_count,
+        _ => false,
+    })
+}
+
+fn should_defer_start_until_idle(
+    playback: PlaybackLifecycle, cleanup: IdleCleanup, message: &MpvMessage,
+) -> bool {
+    cleanup == IdleCleanup::Ready
+        && playback == PlaybackLifecycle::Ended
+        && requests_file_start(message)
+}
+
+fn complete_idle_cleanup(
+    mpv: &Mpv, proxy: &mut Option<WaylandProxy>, playback: &mut PlaybackLifecycle,
+    deferred_messages: &mut VecDeque<MpvMessage>, replay: &mut VecDeque<MpvMessage>,
 ) {
-    if std::env::var_os("WAYLAND_DISPLAY").is_none() {
-        let _ = mpv.command(command, args);
-        *proxy_needs_revalidation = false;
+    *playback = PlaybackLifecycle::Idle;
+    let has_deferred_start = has_deferred_file_start(mpv, deferred_messages);
+    reconcile_proxy_after_idle(mpv, proxy, has_deferred_start);
+    replay.append(deferred_messages);
+}
+
+fn begin_idle_cleanup(mpv: &Mpv, cleanup: &mut IdleCleanup) {
+    match queue_idle_fence(mpv) {
+        Ok(()) => cleanup.begin(),
+        Err(error) => tracing::error!(
+            target: "mutsumi::mpv",
+            %error,
+            "failed to queue the mpv idle lifecycle fence"
+        ),
+    }
+}
+
+fn queue_idle_fence(mpv: &Mpv) -> libmpv2::Result<()> {
+    // This always-available property gives us a side-effect-free reply in the
+    // same event FIFO after the preceding stop-like operation.
+    let result = unsafe {
+        libmpv2_sys::mpv_get_property_async(
+            mpv.ctx.as_ptr(),
+            IDLE_FENCE_REPLY,
+            c"idle-active".as_ptr(),
+            libmpv2_sys::mpv_format_MPV_FORMAT_FLAG,
+        )
+    };
+
+    if result < 0 {
+        Err(libmpv2::Error::Raw(result))
+    } else {
+        Ok(())
+    }
+}
+
+fn reconcile_proxy_after_idle(
+    mpv: &Mpv, proxy: &mut Option<WaylandProxy>, has_deferred_start: bool,
+) {
+    let Some(current) = proxy.as_ref() else {
         return;
-    }
+    };
+    let has_current_vo = mpv
+        .get_property::<String>("current-vo")
+        .is_ok_and(|vo| !vo.is_empty());
+    let handoff_is_published = current
+        .handoff
+        .as_ref()
+        .is_some_and(WaylandSocketHandoff::is_published);
 
-    let proxy_finished = proxy.as_ref().is_some_and(ProxyConnection::is_finished);
-    let proxy_stopped = *proxy_needs_revalidation
-        && proxy.is_some()
-        && !mpv.get_property::<bool>("vo-configured").unwrap_or(false);
-    if proxy_finished || proxy_stopped {
-        drop(proxy.take());
-    }
-    *proxy_needs_revalidation = false;
-
-    // Recheck immediately before the command to narrow the disconnect race
-    // between validating a reused proxy and starting the next file.
-    if proxy.as_ref().is_some_and(ProxyConnection::is_finished) {
-        drop(proxy.take());
-    }
-    if proxy.is_some() {
-        if let Err(error) = mpv.command(command, args) {
-            tracing::error!(
-                target: "mutsumi::mpv",
-                %error,
-                "Wayland MPV command failed"
-            );
+    if !current
+        .phase
+        .survives_idle(has_current_vo, handoff_is_published, has_deferred_start)
+    {
+        tracing::debug!(
+            target: "mutsumi::mpv",
+            "mpv destroyed its VO while stopping; rebuilding the Wayland proxy"
+        );
+        if let Some(proxy) = proxy.take() {
+            proxy.cancel_if_unclaimed();
         }
-        return;
+    }
+}
+
+fn drain_proxy_events(proxy: &mut Option<WaylandProxy>) {
+    while let Some(rx) = proxy.as_ref().map(WaylandProxy::event_rx) {
+        let event = match rx.try_recv() {
+            Ok(event) => Ok(event),
+            Err(flume::TryRecvError::Disconnected) => Err(flume::RecvError::Disconnected),
+            Err(flume::TryRecvError::Empty) => break,
+        };
+        handle_proxy_event(proxy, event);
+    }
+}
+
+fn handle_proxy_event(
+    proxy: &mut Option<WaylandProxy>, event: Result<ProxyLifecycleEvent, flume::RecvError>,
+) {
+    let event = event.unwrap_or(ProxyLifecycleEvent::Disconnected);
+    match event {
+        ProxyLifecycleEvent::Connected => {
+            if let Some(proxy) = proxy.as_mut() {
+                let was_pending = proxy.phase == WaylandProxyPhase::Pending;
+                proxy.mark_connected();
+                if was_pending {
+                    tracing::debug!(
+                        target: "mutsumi::mpv",
+                        "mpv connected to the Wayland proxy"
+                    );
+                }
+            }
+        }
+        ProxyLifecycleEvent::Disconnected => {
+            let Some(disconnected) = proxy.take() else {
+                return;
+            };
+            let was_pending = disconnected.phase == WaylandProxyPhase::Pending;
+            debug_assert_eq!(
+                disconnected
+                    .phase
+                    .transition(ProxyLifecycleEvent::Disconnected),
+                None
+            );
+            if was_pending {
+                // The worker can exit just before mpv consumes the submitted
+                // descriptor. Closing it here could race with that transfer.
+                drop(disconnected);
+                // mpv reports media failures with the matching playback
+                // request. A proxy-level error here has no generation and
+                // could otherwise fail a newer load after stop/switch.
+                tracing::warn!(
+                    target: "mutsumi::mpv",
+                    "Wayland proxy exited before mpv connected"
+                );
+            } else {
+                drop(disconnected);
+                tracing::debug!(
+                    target: "mutsumi::mpv",
+                    "mpv disconnected from the Wayland proxy"
+                );
+            }
+        }
+    }
+}
+
+fn run_wayland_command(
+    mpv: &Mpv, proxy: &mut Option<WaylandProxy>, command: &str, args: &[&str],
+) -> bool {
+    if std::env::var_os("WAYLAND_DISPLAY").is_none() {
+        return mpv.command(command, args).is_ok();
+    }
+
+    if proxy.is_some() {
+        return match mpv.command(command, args) {
+            Ok(()) => true,
+            Err(error) => {
+                tracing::error!(
+                    target: "mutsumi::mpv",
+                    %error,
+                    "Wayland MPV command failed"
+                );
+                false
+            }
+        };
     }
 
     let mut connection = match start_mpv_proxy() {
         Ok(connection) => connection,
         Err(error) => {
-            stop_failed_wayland_load(mpv, error.to_string());
-            return;
+            report_wayland_handoff_failure(error.to_string());
+            return false;
         }
     };
-    let result = connection
-        .take_client_fd()
-        .ok_or_else(|| "Wayland proxy did not return a client file descriptor".to_string())
-        .and_then(|client_fd| {
-            command_with_wayland_socket(mpv, &connection, client_fd, command, args)
-        });
-
-    match result {
-        Ok(()) => *proxy = Some(connection),
-        Err(error) => stop_failed_wayland_load(mpv, error),
-    }
-}
-
-fn command_with_wayland_socket(
-    mpv: &Mpv, connection: &ProxyConnection, client_fd: std::os::fd::OwnedFd, command: &str,
-    args: &[&str],
-) -> Result<(), String> {
-    // WAYLAND_SOCKET is process-global. Keep the handoff serialized until
-    // this exact synthetic connection requests its registry; returning from
-    // `loadfile` does not prove that MPV's VO thread consumed the descriptor.
-    let _guard = WAYLAND_HANDOFF_LOCK.lock().unwrap();
-    let previous = std::env::var_os("WAYLAND_SOCKET");
-    let raw_fd = client_fd.into_raw_fd();
-    unsafe { std::env::set_var("WAYLAND_SOCKET", raw_fd.to_string()) };
-
-    let command_result = mpv
-        .command(command, args)
-        .map_err(|error| error.to_string());
-    let command_failed = command_result.is_err();
-    let result = command_result.and_then(|()| {
-        connection
-            .wait_until_connected(std::time::Duration::from_secs(10))
-            .map_err(|error| error.to_string())
-    });
-
-    match previous {
-        Some(previous) => unsafe { std::env::set_var("WAYLAND_SOCKET", previous) },
-        None => unsafe { std::env::remove_var("WAYLAND_SOCKET") },
-    }
-
-    if command_failed {
-        unsafe { libc::close(raw_fd) };
-    } else if let Err(error) = &result {
-        // Ownership is ambiguous after a timeout: MPV may have consumed the
-        // descriptor without reaching get_registry, or it may not have taken
-        // it at all. Closing it could race with libwayland; leaving it open can
-        // leak one fd in the latter case, which is the safer failure mode.
-        tracing::warn!(
-            target: "mutsumi::mpv",
-            raw_fd,
-            %error,
-            "Wayland proxy connection handshake failed"
+    let Some(client_fd) = connection.take_client_fd() else {
+        report_wayland_handoff_failure(
+            "Wayland proxy did not return a client file descriptor".to_string(),
         );
-    }
+        return false;
+    };
+    let handoff = WaylandSocketHandoff::publish(client_fd);
 
-    result
+    match mpv.command(command, args) {
+        Ok(()) => {
+            *proxy = Some(WaylandProxy::pending(connection, handoff));
+            true
+        }
+        Err(error) => {
+            handoff.rollback();
+            report_wayland_handoff_failure(error.to_string());
+            false
+        }
+    }
 }
 
-fn stop_failed_wayland_load(mpv: &Mpv, error: String) {
+fn report_wayland_handoff_failure(error: String) {
     tracing::error!(
         target: "mutsumi::mpv",
         %error,
         "Wayland proxy handoff failed"
     );
-    let _ = mpv.command("stop", &[]);
     let _ = MPV_EVENT_CHANNEL.tx.send(ListenEvent::Error(error));
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        IdleCleanup,
+        MpvMessage,
+        PlaybackLifecycle,
+        ProxyLifecycleEvent,
+        WaylandProxyPhase,
+        mark_file_start_requested,
+        mark_file_started,
+        should_defer_start_until_idle,
+    };
+
+    #[test]
+    fn pending_proxy_becomes_active_only_after_connection() {
+        assert_eq!(
+            WaylandProxyPhase::Pending.transition(ProxyLifecycleEvent::Connected),
+            Some(WaylandProxyPhase::Active)
+        );
+    }
+
+    #[test]
+    fn disconnected_proxy_must_be_rebuilt() {
+        for phase in [WaylandProxyPhase::Pending, WaylandProxyPhase::Active] {
+            assert_eq!(phase.transition(ProxyLifecycleEvent::Disconnected), None);
+        }
+    }
+
+    #[test]
+    fn duplicate_connection_event_is_idempotent() {
+        assert_eq!(
+            WaylandProxyPhase::Active.transition(ProxyLifecycleEvent::Connected),
+            Some(WaylandProxyPhase::Active)
+        );
+    }
+
+    #[test]
+    fn idle_start_then_stop_completes_at_fence_reply() {
+        let mut playback = PlaybackLifecycle::Idle;
+        let mut cleanup = IdleCleanup::Ready;
+
+        mark_file_start_requested(&mut playback);
+        cleanup.begin();
+
+        assert_eq!(playback, PlaybackLifecycle::StartingFromIdle);
+        assert!(cleanup.fence_reply(playback));
+        assert_eq!(cleanup, IdleCleanup::Ready);
+    }
+
+    #[test]
+    fn started_file_waits_for_idle_after_fence_reply() {
+        let mut playback = PlaybackLifecycle::Idle;
+        let mut cleanup = IdleCleanup::Ready;
+
+        mark_file_start_requested(&mut playback);
+        cleanup.begin();
+        mark_file_started(&mut playback);
+
+        assert!(!cleanup.fence_reply(playback));
+        assert_eq!(cleanup, IdleCleanup::AwaitingIdle);
+        assert!(cleanup.finish_idle(PlaybackLifecycle::Ended));
+    }
+
+    #[test]
+    fn end_file_before_fence_reply_still_waits_for_idle() {
+        let mut cleanup = IdleCleanup::Ready;
+        cleanup.begin();
+
+        assert!(!cleanup.fence_reply(PlaybackLifecycle::Ended));
+        assert_eq!(cleanup, IdleCleanup::AwaitingIdle);
+        assert!(cleanup.finish_idle(PlaybackLifecycle::Ended));
+    }
+
+    #[test]
+    fn idle_observed_before_fence_reply_completes_the_barrier() {
+        let mut cleanup = IdleCleanup::Ready;
+        cleanup.begin();
+
+        assert!(cleanup.fence_reply(PlaybackLifecycle::Idle));
+        assert_eq!(cleanup, IdleCleanup::Ready);
+    }
+
+    #[test]
+    fn active_replacement_preserves_non_idle_origin() {
+        let mut playback = PlaybackLifecycle::Active;
+        let mut cleanup = IdleCleanup::Ready;
+
+        mark_file_start_requested(&mut playback);
+        mark_file_start_requested(&mut playback);
+        cleanup.begin();
+
+        assert_eq!(playback, PlaybackLifecycle::StartingFromPlayback);
+        assert!(!cleanup.fence_reply(playback));
+        assert_eq!(cleanup, IdleCleanup::AwaitingIdle);
+    }
+
+    #[test]
+    fn start_file_after_an_old_idle_still_waits_for_the_stop_idle() {
+        let mut playback = PlaybackLifecycle::Idle;
+        let mut cleanup = IdleCleanup::Ready;
+
+        mark_file_start_requested(&mut playback);
+        cleanup.begin();
+        playback = PlaybackLifecycle::Idle;
+        mark_file_started(&mut playback);
+
+        assert_eq!(playback, PlaybackLifecycle::Active);
+        assert!(!cleanup.fence_reply(playback));
+        assert_eq!(cleanup, IdleCleanup::AwaitingIdle);
+    }
+
+    #[test]
+    fn natural_idle_reconciles_only_after_end_file() {
+        let mut cleanup = IdleCleanup::Ready;
+
+        assert!(!cleanup.finish_idle(PlaybackLifecycle::Active));
+        assert!(!cleanup.finish_idle(PlaybackLifecycle::StartingFromIdle));
+        assert!(cleanup.finish_idle(PlaybackLifecycle::Ended));
+    }
+
+    #[test]
+    fn start_after_end_file_waits_for_the_matching_idle() {
+        let cleanup = IdleCleanup::Ready;
+        let load = MpvMessage::WaylandCommand {
+            cmd: "loadfile".to_string(),
+            args: vec!["video.mkv".to_string(), "replace".to_string()],
+        };
+
+        assert!(should_defer_start_until_idle(
+            PlaybackLifecycle::Ended,
+            cleanup,
+            &load
+        ));
+        assert!(!should_defer_start_until_idle(
+            PlaybackLifecycle::Idle,
+            cleanup,
+            &load
+        ));
+    }
+
+    #[test]
+    fn idle_cleanup_defers_mutations_but_not_lifecycle_messages() {
+        let cleanup = IdleCleanup::AwaitingFence;
+        let load = MpvMessage::WaylandCommand {
+            cmd: "loadfile".to_string(),
+            args: vec!["video.mkv".to_string(), "replace".to_string()],
+        };
+
+        assert!(cleanup.should_defer(&load));
+        assert!(!cleanup.should_defer(&MpvMessage::StartFile));
+        assert!(!cleanup.should_defer(&MpvMessage::EndFile));
+        assert!(!cleanup.should_defer(&MpvMessage::Idle));
+        assert!(!cleanup.should_defer(&MpvMessage::FenceReply(7)));
+        assert!(!cleanup.should_defer(&MpvMessage::Shutdown));
+    }
+
+    #[test]
+    fn idle_barrier_reuses_pending_or_retained_vo_only() {
+        assert!(WaylandProxyPhase::Pending.survives_idle(false, true, true));
+        assert!(!WaylandProxyPhase::Pending.survives_idle(false, true, false));
+        assert!(!WaylandProxyPhase::Pending.survives_idle(false, false, true));
+        assert!(WaylandProxyPhase::Active.survives_idle(true, false, true));
+        assert!(!WaylandProxyPhase::Active.survives_idle(false, false, true));
+    }
 }
 
 impl SendMpv {
@@ -585,18 +1181,28 @@ impl SendMpv {
                 }
                 Event::EndFile(reason) => {
                     self.has_file.set(false);
+                    let _ = MPV_CTRL.tx.send(MpvMessage::EndFile);
                     let _ = MPV_EVENT_CHANNEL.tx.send(ListenEvent::Eof(reason));
                 }
                 Event::StartFile => {
                     self.has_file.set(true);
+                    let _ = MPV_CTRL.tx.send(MpvMessage::StartFile);
                     let _ = MPV_EVENT_CHANNEL.tx.send(ListenEvent::StartFile);
                     let pause = self.get_property::<bool>("pause").unwrap_or(false);
                     let _ = MPV_EVENT_CHANNEL.tx.send(ListenEvent::Pause(pause));
+                }
+                Event::GetPropertyReply { reply_userdata, .. } => {
+                    let _ = MPV_CTRL.tx.send(MpvMessage::FenceReply(reply_userdata));
                 }
                 Event::Shutdown => {
                     let _ = MPV_EVENT_CHANNEL.tx.send(ListenEvent::Shutdown);
                     let _ = MPV_CTRL.tx.send(MpvMessage::Shutdown);
                     return false;
+                }
+                Event::Deprecated(event)
+                    if event.event_id == libmpv2_sys::mpv_event_id_MPV_EVENT_IDLE =>
+                {
+                    let _ = MPV_CTRL.tx.send(MpvMessage::Idle);
                 }
                 _ => {}
             },
@@ -604,6 +1210,15 @@ impl SendMpv {
                 let libmpv2::Error::Raw(code) = error else {
                     return true;
                 };
+
+                // libmpv2 converts END_FILE with a non-zero media error into
+                // Err instead of Event::EndFile. The only async request here
+                // reads the always-available idle-active property, so an
+                // active-file Raw error is the media termination needed by the
+                // stop/idle barrier.
+                if self.has_file.replace(false) {
+                    let _ = MPV_CTRL.tx.send(MpvMessage::EndFile);
+                }
 
                 let message = MutsumiMpvError::from_code(code).to_string();
                 let _ = MPV_EVENT_CHANNEL.tx.send(ListenEvent::Error(message));
