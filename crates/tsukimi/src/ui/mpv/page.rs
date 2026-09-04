@@ -891,11 +891,19 @@ impl MPVPage {
         }
 
         if let Some(cached) = DanmakuCacheMap::load().cached_danmaku(item) {
+            let expected_configuration_generation = DanmakuClient::configuration_generation();
+            let generation = self.imp().danmaku_generation.get();
+            let item_id = item.id();
             spawn_g_timeout(glib::clone!(
                 #[weak(rename_to = obj)]
                 self,
                 async move {
-                    if !obj.imp().danmaku_popover_content.enabled() {
+                    if expected_configuration_generation
+                        != DanmakuClient::configuration_generation()
+                        || !obj.is_current_danmaku_request(generation, &item_id)
+                        || !obj.imp().danmaku_popover_content.enabled()
+                        || obj.has_external_danmaku_source()
+                    {
                         return;
                     }
                     if let Err(error) = obj
@@ -905,6 +913,7 @@ impl MPVPage {
                             cached.item_name,
                             true,
                             "cached",
+                            Some(expected_configuration_generation),
                         )
                         .await
                     {
@@ -1072,8 +1081,12 @@ impl MPVPage {
     }
 
     pub async fn apply_manual_danmaku(
-        &self, client: DanmakuClient, expected_item_id: &str, episode_id: i64, item_name: String,
+        &self, client: DanmakuClient, expected_item_id: &str,
+        expected_configuration_generation: u64, episode_id: i64, item_name: String,
     ) -> anyhow::Result<bool> {
+        if expected_configuration_generation != DanmakuClient::configuration_generation() {
+            anyhow::bail!("The danmaku source changed before loading danmaku");
+        }
         if self
             .current_video()
             .as_ref()
@@ -1081,13 +1094,20 @@ impl MPVPage {
         {
             anyhow::bail!("The playing video changed before loading danmaku");
         }
-        self.apply_danmaku_episode(client, episode_id, item_name, true, "manual")
-            .await
+        self.apply_danmaku_episode(
+            client,
+            episode_id,
+            item_name,
+            true,
+            "manual",
+            Some(expected_configuration_generation),
+        )
+        .await
     }
 
     async fn apply_danmaku_episode(
         &self, client: DanmakuClient, episode_id: i64, item_name: String, manual: bool,
-        flow: &'static str,
+        flow: &'static str, expected_configuration_generation: Option<u64>,
     ) -> anyhow::Result<bool> {
         let Some(current_item) = self.current_video() else {
             anyhow::bail!("No video is currently playing");
@@ -1105,7 +1125,10 @@ impl MPVPage {
         let load_started = Instant::now();
         let comments_result =
             spawn_tokio(async move { client.get_comments(episode_id).await }).await;
-        let stale = !self.is_current_danmaku_request(generation, &item_id);
+        let request_stale = !self.is_current_danmaku_request(generation, &item_id);
+        let source_stale = expected_configuration_generation
+            .is_some_and(|expected| expected != DanmakuClient::configuration_generation());
+        let stale = request_stale || source_stale;
         Self::trace_danmaku_load(
             flow,
             &item_id,
@@ -1117,6 +1140,15 @@ impl MPVPage {
         );
 
         if stale {
+            if source_stale && !request_stale {
+                self.restore_danmaku_after_manual_failure(
+                    &transaction,
+                    DanmakuPopoverStatus::Unavailable,
+                );
+            }
+            if source_stale {
+                anyhow::bail!("The danmaku source changed while loading danmaku");
+            }
             anyhow::bail!("The current video changed while loading danmaku");
         }
 

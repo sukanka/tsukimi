@@ -717,6 +717,12 @@ impl DanmakuSearchDialog {
         );
     }
 
+    fn show_source_changed_toast(&self) {
+        self.show_toast(gettext(
+            "The danmaku source changed. Reopen this dialog to search again.",
+        ));
+    }
+
     fn selected_anime_type(&self) -> AnimeType {
         match self.imp().anime_type_dropdown.selected() {
             0 => AnimeType::Tvseries,
@@ -894,10 +900,9 @@ impl DanmakuSearchDialog {
     }
 
     pub fn apply_episode(&self, item: TuItem) {
-        if self.imp().source_generation.get() != DanmakuClient::configuration_generation() {
-            self.show_toast(gettext(
-                "The danmaku source changed. Reopen this dialog to search again.",
-            ));
+        let expected_configuration_generation = self.imp().source_generation.get();
+        if expected_configuration_generation != DanmakuClient::configuration_generation() {
+            self.show_source_changed_toast();
             return;
         }
         let Ok(episode_id) = item.id().parse::<i64>() else {
@@ -934,10 +939,21 @@ impl DanmakuSearchDialog {
             #[weak(rename_to = obj)]
             self,
             async move {
-                match page
-                    .apply_manual_danmaku(client, &expected_item_id, episode_id, item_name)
-                    .await
-                {
+                let result = page
+                    .apply_manual_danmaku(
+                        client,
+                        &expected_item_id,
+                        expected_configuration_generation,
+                        episode_id,
+                        item_name,
+                    )
+                    .await;
+                if expected_configuration_generation != DanmakuClient::configuration_generation() {
+                    obj.show_source_changed_toast();
+                    return;
+                }
+
+                match result {
                     Ok(true) => {
                         let mut cache = DanmakuCacheMap::load();
                         if let Err(error) = cache.remember_manual_selection(
