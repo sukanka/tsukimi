@@ -952,7 +952,7 @@ impl JellyfinClient {
     pub fn resolve_url(&self, path: &str) -> String {
         let s = self.session();
         let (url, _) = s.url_headers.as_ref().expect("Client not initialized");
-        url.join(path.trim_start_matches('/')).unwrap().to_string()
+        resolve_url(url, path)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -1650,6 +1650,13 @@ mod session_generation_tests {
     }
 }
 
+fn resolve_url(base: &Url, path: &str) -> String {
+    Url::parse(path)
+        .or_else(|_| base.join(path))
+        .expect("Failed to resolve media URL")
+        .to_string()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1657,6 +1664,20 @@ mod tests {
         account::ServerType,
         error::UserFacingError,
     };
+
+    #[test]
+    fn resolve_url_preserves_server_supplied_absolute_and_root_relative_urls() {
+        let base = Url::parse("https://example.com/emby/").unwrap();
+
+        assert_eq!(
+            resolve_url(&base, "https://cdn.example.com/video.mp4?token=abc"),
+            "https://cdn.example.com/video.mp4?token=abc"
+        );
+        assert_eq!(
+            resolve_url(&base, "/emby/Videos/1/original.mp4"),
+            "https://example.com/emby/Videos/1/original.mp4"
+        );
+    }
 
     #[test]
     fn builds_emby_base_url_with_normalized_path() {

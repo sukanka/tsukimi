@@ -2680,6 +2680,9 @@ fn direct_play_url(source: &MediaSource, play_session_id: Option<&str>) -> Optio
 fn media_source_url(
     source: &MediaSource, play_session_id: Option<&str>,
 ) -> Option<(String, Option<MediaSourceFallback>)> {
+    if let Some(url) = source.direct_stream_url.as_deref().filter(|url| !url.is_empty()) {
+        return Some((url.to_owned(), None));
+    }
     if let Some(path) = source.path.as_deref()
         && Url::parse(path).is_ok()
     {
@@ -2696,6 +2699,36 @@ fn media_source_url(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn media_source(direct_stream_url: Option<&str>, path: Option<&str>) -> MediaSource {
+        MediaSource {
+            id: "media-source".into(),
+            name: String::new(),
+            size: None,
+            path: path.map(str::to_owned),
+            run_time_ticks: None,
+            bit_rate: None,
+            container: Some("mp4".into()),
+            direct_stream_url: direct_stream_url.map(str::to_owned),
+            transcoding_url: None,
+            live_stream_id: None,
+            media_streams: Vec::new(),
+            item_id: Some("item".into()),
+            etag: None,
+        }
+    }
+
+    #[test]
+    fn media_source_url_prefers_server_direct_stream_url() {
+        let source = media_source(
+            Some("/emby/Videos/item/original.mp4?api_key=server-token"),
+            Some("https://files.example.com/item.mp4"),
+        );
+
+        let (url, fallback) = media_source_url(&source, Some("play-session")).unwrap();
+        assert_eq!(url, "/emby/Videos/item/original.mp4?api_key=server-token");
+        assert!(fallback.is_none());
+    }
 
     fn scope(account_name: &str, user_id: &str, endpoint: &str) -> PlaybackCacheScope {
         PlaybackCacheScope {
