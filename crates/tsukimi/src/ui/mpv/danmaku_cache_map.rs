@@ -5,9 +5,13 @@ use serde::{
     Serialize,
 };
 
-use crate::ui::{
-    models::SETTINGS,
-    provider::tu_item::TuItem,
+use crate::{
+    client::jellyfin_client::JELLYFIN_CLIENT,
+    ui::{
+        models::SETTINGS,
+        mpv::danmaku_client::DanmakuClient,
+        provider::tu_item::TuItem,
+    },
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -32,6 +36,29 @@ enum DanmakuCacheEntry {
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
 pub struct DanmakuCacheMap {
     entries: HashMap<String, DanmakuCacheEntry>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+struct DanmakuCacheScope {
+    account_name: String,
+    user_id: String,
+    endpoint: Option<String>,
+    danmaku_source: String,
+}
+
+impl DanmakuCacheScope {
+    fn current() -> Self {
+        let session = JELLYFIN_CLIENT.session();
+        Self {
+            account_name: session.account.servername.clone(),
+            user_id: session.account.user_id.clone(),
+            endpoint: session
+                .url_headers
+                .as_ref()
+                .map(|(url, _headers)| url.to_string()),
+            danmaku_source: DanmakuClient::source_fingerprint(),
+        }
+    }
 }
 
 impl DanmakuCacheMap {
@@ -113,18 +140,24 @@ impl DanmakuCacheMap {
     }
 
     fn cache_key(item: &TuItem) -> Option<String> {
-        if item.series_name().is_some() {
+        let media_key = if item.series_name().is_some() {
             if let Some(series_id) = item.series_id().filter(|id| !id.is_empty()) {
-                return Some(format!("series-id:{series_id}"));
+                format!("series-id:{series_id}")
+            } else {
+                item.series_name()
+                    .filter(|name| !name.trim().is_empty())
+                    .map(|name| format!("series-name:{}", name.trim().to_lowercase()))?
             }
-            return item
-                .series_name()
-                .filter(|name| !name.trim().is_empty())
-                .map(|name| format!("series-name:{}", name.trim().to_lowercase()));
-        }
+        } else {
+            let id = item.id();
+            (!id.is_empty()).then(|| format!("item:{id}"))?
+        };
 
-        let id = item.id();
-        (!id.is_empty()).then(|| format!("item:{id}"))
+        Self::scoped_cache_key(&DanmakuCacheScope::current(), &media_key)
+    }
+
+    fn scoped_cache_key(scope: &DanmakuCacheScope, media_key: &str) -> Option<String> {
+        serde_json::to_string(&("v2", scope, media_key)).ok()
     }
 
     fn episode_id(item: &TuItem) -> anyhow::Result<i64> {
@@ -138,5 +171,44 @@ impl DanmakuCacheMap {
             || item.name(),
             |series_name| format!("{} - {series_name}", item.name()),
         )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn scope(endpoint: &str, danmaku_source: &str) -> DanmakuCacheScope {
+        DanmakuCacheScope {
+            account_name: "home".into(),
+            user_id: "user".into(),
+            endpoint: Some(endpoint.into()),
+            danmaku_source: danmaku_source.into(),
+        }
+    }
+
+    #[test]
+    fn manual_matches_are_scoped_to_media_server_and_danmaku_source() {
+        let official = DanmakuCacheMap::scoped_cache_key(
+            &scope(
+                "https://home.example/",
+                "https://api.dandanplay.net|official",
+            ),
+            "item:episode",
+        );
+        let remote = DanmakuCacheMap::scoped_cache_key(
+            &scope(
+                "https://remote.example/",
+                "https://api.dandanplay.net|official",
+            ),
+            "item:episode",
+        );
+        let custom = DanmakuCacheMap::scoped_cache_key(
+            &scope("https://home.example/", "https://danmaku.example|anonymous"),
+            "item:episode",
+        );
+
+        assert_ne!(official, remote);
+        assert_ne!(official, custom);
     }
 }

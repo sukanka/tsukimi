@@ -2,6 +2,10 @@ use std::{
     sync::{
         LazyLock,
         RwLock,
+        atomic::{
+            AtomicU64,
+            Ordering,
+        },
     },
     time::{
         Duration,
@@ -15,6 +19,10 @@ use mutsumi::Danmaku;
 use reqwest::header::{
     HeaderMap,
     HeaderValue,
+};
+use serde::{
+    Deserialize,
+    de::DeserializeOwned,
 };
 use sha2::{
     Digest,
@@ -32,6 +40,7 @@ use crate::{
     ui::mpv::danmaku::DanmakuExt,
 };
 
+const ANIME_DETAIL_SEARCH_TIMEOUT: Duration = Duration::from_secs(10);
 const DANMAKU_CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 const DANMAKU_REQUEST_TIMEOUT: Duration = Duration::from_secs(20);
 
@@ -53,6 +62,129 @@ pub struct DanmakuLoadResult {
     pub raw_count: usize,
     pub fetch_elapsed: Duration,
     pub convert_elapsed: Duration,
+}
+
+// Several self-hosted, DanDanPlay-compatible servers return localized values such as `日番`
+// in the `type` field. Decode only the search fields used by the UI so those labels and other
+// nonessential schema extensions cannot invalidate an otherwise usable response.
+#[derive(Debug, Deserialize)]
+struct CompatibleSearchResponse<T> {
+    #[serde(rename = "errorCode")]
+    error_code: Option<i32>,
+    success: Option<bool>,
+    #[serde(rename = "errorMessage")]
+    error_message: Option<String>,
+    animes: Option<Vec<T>>,
+}
+
+impl<T> CompatibleSearchResponse<T> {
+    fn into_animes(self) -> anyhow::Result<Vec<T>> {
+        if self.success == Some(false) || self.error_code.is_some_and(|code| code != 0) {
+            let message = self
+                .error_message
+                .filter(|message| !message.trim().is_empty())
+                .unwrap_or_else(|| "Danmaku API search failed".to_string());
+            if let Some(code) = self.error_code {
+                anyhow::bail!("{message} (error code {code})");
+            }
+            anyhow::bail!(message);
+        }
+
+        Ok(self.animes.unwrap_or_default())
+    }
+}
+
+#[derive(Debug, Deserialize)]
+struct CompatibleSearchAnimeDetails {
+    #[serde(rename = "animeId")]
+    anime_id: Option<i64>,
+    #[serde(rename = "bangumiId")]
+    bangumi_id: Option<String>,
+    #[serde(rename = "animeTitle")]
+    anime_title: Option<String>,
+    #[serde(rename = "type")]
+    type_label: Option<serde_json::Value>,
+    #[serde(rename = "typeDescription")]
+    type_description: Option<String>,
+    #[serde(rename = "imageUrl")]
+    image_url: Option<String>,
+}
+
+impl From<CompatibleSearchAnimeDetails> for SearchAnimeDetails {
+    fn from(anime: CompatibleSearchAnimeDetails) -> Self {
+        let anime_type = compatible_anime_type(anime.type_label.as_ref());
+        Self {
+            anime_id: anime.anime_id,
+            bangumi_id: anime.bangumi_id,
+            anime_title: anime.anime_title,
+            r#type: anime_type,
+            type_description: compatible_type_description(anime.type_description, anime.type_label),
+            image_url: anime.image_url,
+            start_date: None,
+            episode_count: None,
+            rating: None,
+            is_favorited: None,
+        }
+    }
+}
+
+#[derive(Debug, Deserialize)]
+struct CompatibleSearchEpisodesAnime {
+    #[serde(rename = "animeId")]
+    anime_id: Option<i64>,
+    #[serde(rename = "animeTitle")]
+    anime_title: Option<String>,
+    #[serde(rename = "type")]
+    type_label: Option<serde_json::Value>,
+    #[serde(rename = "typeDescription")]
+    type_description: Option<String>,
+    episodes: Option<Vec<CompatibleSearchEpisodeDetails>>,
+}
+
+impl From<CompatibleSearchEpisodesAnime> for SearchEpisodesAnime {
+    fn from(anime: CompatibleSearchEpisodesAnime) -> Self {
+        let anime_type = compatible_anime_type(anime.type_label.as_ref());
+        Self {
+            anime_id: anime.anime_id,
+            anime_title: anime.anime_title,
+            r#type: anime_type,
+            type_description: compatible_type_description(anime.type_description, anime.type_label),
+            episodes: anime
+                .episodes
+                .map(|episodes| episodes.into_iter().map(Into::into).collect()),
+        }
+    }
+}
+
+#[derive(Debug, Deserialize)]
+struct CompatibleSearchEpisodeDetails {
+    #[serde(rename = "episodeId")]
+    episode_id: Option<i64>,
+    #[serde(rename = "episodeTitle")]
+    episode_title: Option<String>,
+}
+
+impl From<CompatibleSearchEpisodeDetails> for SearchEpisodeDetails {
+    fn from(episode: CompatibleSearchEpisodeDetails) -> Self {
+        Self {
+            episode_id: episode.episode_id,
+            episode_title: episode.episode_title,
+        }
+    }
+}
+
+fn compatible_type_description(
+    type_description: Option<String>, type_label: Option<serde_json::Value>,
+) -> Option<String> {
+    type_description.or_else(|| {
+        type_label
+            .and_then(|value| value.as_str().map(str::to_string))
+            .filter(|value| !value.trim().is_empty())
+    })
+}
+
+fn compatible_anime_type(type_label: Option<&serde_json::Value>) -> Option<AnimeType> {
+    serde_json::from_value(type_label?.clone()).ok()
 }
 
 #[derive(Clone)]
@@ -97,10 +229,20 @@ impl DanmakuClientConfig {
             credentials,
         })
     }
+
+    fn source_fingerprint(&self) -> String {
+        let app_id = match &self.credentials {
+            DanmakuCredentials::BuiltIn => DEFAULT_DANMAKU_APP_ID,
+            DanmakuCredentials::Anonymous => "anonymous",
+            DanmakuCredentials::Custom { app_id, .. } => app_id,
+        };
+        format!("{}|{app_id}", self.base_url)
+    }
 }
 
 static CONFIG: LazyLock<RwLock<DanmakuClientConfig>> =
     LazyLock::new(|| RwLock::new(DanmakuClientConfig::default()));
+static CONFIG_GENERATION: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Clone)]
 struct RequestSigner {
@@ -157,7 +299,19 @@ impl DanmakuClient {
         *CONFIG
             .write()
             .map_err(|_| anyhow::anyhow!("Danmaku configuration lock is poisoned"))? = config;
+        CONFIG_GENERATION.fetch_add(1, Ordering::AcqRel);
         Ok(())
+    }
+
+    pub fn configuration_generation() -> u64 {
+        CONFIG_GENERATION.load(Ordering::Acquire)
+    }
+
+    pub fn source_fingerprint() -> String {
+        CONFIG
+            .read()
+            .map(|config| config.source_fingerprint())
+            .unwrap_or_else(|_| DEFAULT_DANMAKU_SERVER_URL.to_string())
     }
 
     pub fn new() -> anyhow::Result<Self> {
@@ -186,7 +340,7 @@ impl DanmakuClient {
         })
     }
 
-    async fn request<T: Request>(&self, request_kind: T) -> anyhow::Result<T::Response> {
+    async fn send<T: Request>(&self, request_kind: T) -> anyhow::Result<reqwest::Response> {
         let path = request_kind.path();
         let method = reqwest::Method::from_bytes(T::METHOD.as_str().as_bytes())?;
         let mut request = self
@@ -203,12 +357,23 @@ impl DanmakuClient {
             request = request.query(params);
         }
 
-        Ok(request
-            .send()
+        Ok(request.send().await?.error_for_status()?)
+    }
+
+    async fn request<T: Request>(&self, request_kind: T) -> anyhow::Result<T::Response> {
+        Ok(self.send(request_kind).await?.json::<T::Response>().await?)
+    }
+
+    async fn request_compatible_search<T, I>(&self, request_kind: T) -> anyhow::Result<Vec<I>>
+    where
+        T: Request,
+        I: DeserializeOwned,
+    {
+        self.send(request_kind)
             .await?
-            .error_for_status()?
-            .json::<T::Response>()
-            .await?)
+            .json::<CompatibleSearchResponse<I>>()
+            .await?
+            .into_animes()
     }
 }
 
@@ -216,27 +381,32 @@ impl DanmakuClient {
     pub async fn search_anime_details(
         &self, keyword: String, anime_type: AnimeType,
     ) -> anyhow::Result<Vec<SearchAnimeDetails>> {
-        Ok(self
-            .request(SearchSearchAnime {
+        let animes = tokio::time::timeout(
+            ANIME_DETAIL_SEARCH_TIMEOUT,
+            self.request_compatible_search::<_, CompatibleSearchAnimeDetails>(SearchSearchAnime {
                 params: SearchSearchAnimeParams {
                     keyword,
                     r#type: anime_type,
                     v2: true,
                 },
-            })
-            .await?
-            .animes
-            .unwrap_or_default())
+            }),
+        )
+        .await
+        .map_err(|_| anyhow::anyhow!("anime detail search timed out"))??;
+        Ok(animes.into_iter().map(Into::into).collect())
     }
 
     pub async fn search_animes(
         &self, params: SearchSearchEpisodesParams,
     ) -> anyhow::Result<Vec<SearchEpisodesAnime>> {
         Ok(self
-            .request(SearchSearchEpisodes { params })
+            .request_compatible_search::<_, CompatibleSearchEpisodesAnime>(SearchSearchEpisodes {
+                params,
+            })
             .await?
-            .animes
-            .unwrap_or_default())
+            .into_iter()
+            .map(Into::into)
+            .collect())
     }
 
     pub async fn search_episode(
@@ -316,6 +486,121 @@ impl DanmakuClient {
 #[cfg(test)]
 mod diagnostic_tests {
     use super::*;
+
+    #[test]
+    fn custom_anime_type_labels_do_not_break_title_search() {
+        let response = serde_json::from_value::<
+            CompatibleSearchResponse<CompatibleSearchAnimeDetails>,
+        >(serde_json::json!({
+            "errorCode": 0,
+            "success": true,
+            "animes": [{
+                "animeId": 1779737556,
+                "animeTitle": "Example",
+                "type": "日番",
+                "imageUrl": "https://example.com/poster.jpg"
+            }]
+        }))
+        .expect("compatible anime search response");
+
+        let anime = SearchAnimeDetails::from(
+            response
+                .into_animes()
+                .expect("successful response")
+                .pop()
+                .expect("anime result"),
+        );
+
+        assert_eq!(anime.anime_id, Some(1779737556));
+        assert_eq!(anime.anime_title.as_deref(), Some("Example"));
+        assert_eq!(anime.type_description.as_deref(), Some("日番"));
+        assert!(anime.r#type.is_none());
+    }
+
+    #[test]
+    fn custom_anime_type_labels_do_not_break_episode_search() {
+        let response = serde_json::from_value::<
+            CompatibleSearchResponse<CompatibleSearchEpisodesAnime>,
+        >(serde_json::json!({
+            "errorCode": 0,
+            "success": true,
+            "animes": [{
+                "animeId": 42,
+                "animeTitle": "Example",
+                "type": "动漫",
+                "episodes": [{ "episodeId": 4201, "episodeTitle": "Episode 1" }]
+            }]
+        }))
+        .expect("compatible episode search response");
+
+        let anime = SearchEpisodesAnime::from(
+            response
+                .into_animes()
+                .expect("successful response")
+                .pop()
+                .expect("anime result"),
+        );
+
+        assert_eq!(anime.type_description.as_deref(), Some("动漫"));
+        let episode = anime
+            .episodes
+            .expect("episodes")
+            .pop()
+            .expect("episode result");
+        assert_eq!(episode.episode_id, Some(4201));
+    }
+
+    #[test]
+    fn compatible_search_preserves_standard_anime_types() {
+        let response = serde_json::from_value::<
+            CompatibleSearchResponse<CompatibleSearchEpisodesAnime>,
+        >(serde_json::json!({
+            "errorCode": 0,
+            "success": true,
+            "animes": [{
+                "animeId": 42,
+                "animeTitle": "Example",
+                "type": "movie",
+                "typeDescription": "Anime Film",
+                "episodes": [{ "episodeId": 4201, "episodeTitle": "Movie" }]
+            }]
+        }))
+        .expect("compatible episode search response");
+
+        let anime = SearchEpisodesAnime::from(
+            response
+                .into_animes()
+                .expect("successful response")
+                .pop()
+                .expect("anime result"),
+        );
+
+        assert!(matches!(anime.r#type, Some(AnimeType::Movie)));
+        assert_eq!(anime.type_description.as_deref(), Some("Anime Film"));
+    }
+
+    #[test]
+    fn compatible_search_surfaces_api_errors_and_rejects_bad_shapes() {
+        let response = serde_json::from_value::<
+            CompatibleSearchResponse<CompatibleSearchAnimeDetails>,
+        >(serde_json::json!({
+            "errorCode": 503,
+            "success": false,
+            "errorMessage": "upstream unavailable"
+        }))
+        .expect("error response shape");
+        let error = response.into_animes().expect_err("API error must fail");
+        assert!(error.to_string().contains("upstream unavailable"));
+
+        let malformed = serde_json::from_value::<
+            CompatibleSearchResponse<CompatibleSearchAnimeDetails>,
+        >(serde_json::json!({
+            "errorCode": 0,
+            "success": true,
+            "animes": "not-an-array"
+        }));
+        assert!(malformed.is_err());
+    }
 
     #[test]
     fn episode_search_summary_counts_candidates() {

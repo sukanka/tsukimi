@@ -31,6 +31,7 @@
                         </child>
                         <child>
                           <object class="AdwActionRow" id="danmaku_status_row">
+                            <property name="use-markup">False</property>
                             <property name="subtitle" translatable="yes">Disabled</property>
                             <property name="subtitle-lines">2</property>
                             <property name="subtitle-selectable">True</property>
@@ -64,6 +65,20 @@
                             </style>
                           </object>
                         </child>
+                      </object>
+                    </child>
+                    <child>
+                      <object class="AdwPreferencesGroup">
+                        <property name="title" translatable="yes">Danmaku Servers</property>
+                        <child>
+                          <object class="AdwExpanderRow" id="danmaku_server_expander">
+                            <property name="title" translatable="yes">Active Server</property>
+                            <property name="use-markup">False</property>
+                          </object>
+                        </child>
+                        <style>
+                          <class name="boxed-list-separate"/>
+                        </style>
                       </object>
                     </child>
                     <child>

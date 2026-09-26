@@ -581,6 +581,10 @@ impl Window {
         );
     }
 
+    pub fn danmaku_source_changed(&self) {
+        self.imp().mpvnav.danmaku_source_changed();
+    }
+
     fn set_route_switching(&self, switching: bool) {
         self.imp().route_switching.set(switching);
         self.imp().route_switch_button.set_sensitive(!switching);
