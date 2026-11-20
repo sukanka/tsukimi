@@ -228,12 +228,12 @@ pub enum AnimeType {
     Jpmovie,
     #[serde(rename = "jpdrama")]
     Jpdrama,
-    #[serde(rename = "unknown")]
-    Unknown,
     #[serde(rename = "tmdbtv")]
     Tmdbtv,
     #[serde(rename = "tmdbmovie")]
     Tmdbmovie,
+    #[serde(rename = "unknown", other)]
+    Unknown,
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BangumiTitle {
@@ -1025,4 +1025,21 @@ pub struct UserUpdateEmailRequest {
     #[doc = "新的关联邮箱地址"]
     #[serde(rename = "newEmail")]
     pub new_email: String,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        AnimeType,
+        SearchAnimeDetails,
+    };
+
+    #[test]
+    fn custom_type_label_keeps_search_result() {
+        let result: SearchAnimeDetails =
+            serde_json::from_str(r#"{"animeId":42,"type":"日番"}"#).unwrap();
+
+        assert_eq!(result.anime_id, Some(42));
+        assert!(matches!(result.r#type, Some(AnimeType::Unknown)));
+    }
 }
