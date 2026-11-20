@@ -24,6 +24,10 @@ use std::{
         OwnedFd,
     },
     rc::Rc,
+    sync::mpsc::{
+        SyncSender,
+        sync_channel,
+    },
 };
 
 use once_cell::sync::Lazy;
@@ -422,7 +426,7 @@ fn handle_viewport_update(shared: &Rc<RefCell<SharedState>>, viewport: Viewport)
 
 async fn run_client(
     state: Rc<State>, shared: Rc<RefCell<SharedState>>, event_rx: flume::Receiver<ProxyEvent>,
-    mut viewport_rx: watch::Receiver<Option<Viewport>>,
+    mut viewport_rx: watch::Receiver<Option<Viewport>>, ready: &SyncSender<()>,
 ) {
     let poll_fd = match unsafe { tokio::io::unix::AsyncFd::register(Rc::clone(state.poll_fd())) } {
         Ok(fd) => fd,
@@ -431,6 +435,10 @@ async fn run_client(
             return;
         }
     };
+
+    if ready.send(()).is_err() {
+        return;
+    }
 
     while state.is_not_destroyed() {
         if let Err(e) = state.dispatch_available() {
@@ -469,7 +477,7 @@ async fn run_client(
     }
 }
 
-fn serve_client(socket: OwnedFd, upstream: String) {
+fn serve_client(socket: OwnedFd, upstream: String, ready: &SyncSender<()>) {
     let state = match State::builder(Baseline::ALL_OF_THEM)
         .with_server_display_name(&upstream)
         .build()
@@ -484,6 +492,7 @@ fn serve_client(socket: OwnedFd, upstream: String) {
         Ok(client) => client,
         Err(e) => {
             tracing::error!("wl-proxy-mpv: failed to add client: {e}");
+            state.destroy();
             return;
         }
     };
@@ -517,10 +526,18 @@ fn serve_client(socket: OwnedFd, upstream: String) {
         Ok(runtime) => runtime,
         Err(e) => {
             tracing::error!("wl-proxy-mpv: failed to create runtime: {e}");
+            state.destroy();
             return;
         }
     };
-    runtime.block_on(run_client(state, shared, event_rx, viewport_rx));
+    runtime.block_on(run_client(
+        Rc::clone(&state),
+        shared,
+        event_rx,
+        viewport_rx,
+        ready,
+    ));
+    state.destroy();
 }
 
 static PROXY_ARMED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
@@ -534,30 +551,28 @@ pub fn create_mpv_proxy(format_pairs: Vec<(u32, u64)>) {
 pub fn arm_mpv_proxy() {
     use std::sync::atomic::Ordering;
 
-    if PROXY_ARMED
-        .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
-        .is_err()
+    let Ok(upstream) = std::env::var("WAYLAND_DISPLAY") else {
+        return;
+    };
+    if std::env::var_os("WAYLAND_SOCKET").is_some()
+        || PROXY_ARMED
+            .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+            .is_err()
     {
         return;
     }
-
-    let upstream = match std::env::var("WAYLAND_DISPLAY") {
-        Ok(upstream) => upstream,
-        Err(_) => {
-            PROXY_ARMED.store(false, Ordering::SeqCst);
-            return;
-        }
-    };
 
     let Ok((client, server)) = std::os::unix::net::UnixStream::pair() else {
         PROXY_ARMED.store(false, Ordering::SeqCst);
         return;
     };
 
+    let (ready_tx, ready_rx) = sync_channel(0);
     let result = std::thread::Builder::new()
         .name("wl-proxy-mpv".into())
         .spawn(move || {
-            serve_client(server.into(), upstream);
+            serve_client(server.into(), upstream, &ready_tx);
+            // Keep readiness connected until a failed setup has released the arm.
             PROXY_ARMED.store(false, Ordering::SeqCst);
         });
 
@@ -566,5 +581,8 @@ pub fn arm_mpv_proxy() {
         return;
     }
 
-    unsafe { std::env::set_var("WAYLAND_SOCKET", client.into_raw_fd().to_string()) };
+    if ready_rx.recv().is_ok() && std::env::var_os("WAYLAND_SOCKET").is_none() {
+        // libwayland takes ownership when it connects using WAYLAND_SOCKET.
+        unsafe { std::env::set_var("WAYLAND_SOCKET", client.into_raw_fd().to_string()) };
+    }
 }

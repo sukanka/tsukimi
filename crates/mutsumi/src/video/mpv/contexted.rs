@@ -24,7 +24,6 @@ impl Default for ContextedMPV {
 
 use crate::{
     TrackSelection,
-    arm_mpv_proxy,
     video::{
         MpvActor,
         MpvValue,
@@ -104,9 +103,6 @@ impl ContextedMPV {
     }
 
     pub fn load_video(&self, url: &str) {
-        // mpv will read "WAYLAND_DISPLAY" everytime on loading file
-        arm_mpv_proxy();
-
         self.mpv.command("loadfile", &[url, "replace"]);
     }
 
@@ -116,8 +112,6 @@ impl ContextedMPV {
             self.mpv.command("stop", &[]);
             return;
         }
-
-        arm_mpv_proxy();
 
         let mut iter = urls.iter();
         if let Some(first) = iter.next() {
@@ -129,7 +123,6 @@ impl ContextedMPV {
     }
 
     pub fn set_playlist_pos(&self, pos: i64) {
-        arm_mpv_proxy();
         self.mpv.set_property("playlist-pos", pos);
     }
 
@@ -150,7 +143,6 @@ impl ContextedMPV {
     }
 
     pub fn playlist_add(&self, url: &str, index: i64) {
-        arm_mpv_proxy();
         self.mpv
             .command("loadfile", &[url, "insert-at", &index.to_string()]);
     }

@@ -13,6 +13,7 @@ use crate::{
 
 use super::{
     logging,
+    proxy::arm_mpv_proxy,
     *,
 };
 use flume::{
@@ -243,9 +244,22 @@ impl MpvActor {
                 match msg {
                     MpvMessage::Command { cmd, args } => {
                         let args_ref: Vec<&str> = args.iter().map(String::as_str).collect();
+                        if cmd == "loadfile" && args_ref.get(1).copied() == Some("replace") {
+                            arm_mpv_proxy();
+                        }
                         let _ = mpv.command(&cmd, &args_ref);
                     }
                     MpvMessage::SetProperty { property, value } => {
+                        if property == "playlist-pos"
+                            && let MpvValue::I64(pos) = &value
+                            && *pos >= 0
+                            && mpv
+                                .get_property::<i64>("playlist-count")
+                                .is_ok_and(|count| *pos < count)
+                            && mpv.get_property::<i64>("playlist-pos").ok() != Some(*pos)
+                        {
+                            arm_mpv_proxy();
+                        }
                         let _ = value.set_on(&mpv, &property);
                     }
                     MpvMessage::GetProperty {
