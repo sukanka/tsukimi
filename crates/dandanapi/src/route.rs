@@ -40,14 +40,10 @@ where
     fn into_future(self) -> Self::IntoFuture {
         async move {
             let path = self.kind.path();
-            let mut request = self
-                .client
-                .client()
-                .request(Re::METHOD, format!("{}{}", C::BASE_URI, path));
-
-            if let Some(headers) = self.client.headers(&path) {
-                request = request.headers(headers)
-            }
+            let path = path.strip_prefix('/').unwrap_or(&path);
+            let base_uri = self.client.base_uri().trim_end_matches('/');
+            let client = self.client.client();
+            let mut request = client.request(Re::METHOD, format!("{base_uri}/{path}"));
 
             if let Some(body) = self.kind.body() {
                 request = request.json(&body);
@@ -57,7 +53,12 @@ where
                 request = request.query(&params);
             }
 
-            let response = request.send().await.map_err(Error::HttpError)?;
+            let mut request = request.build().map_err(Error::HttpError)?;
+            if let Some(headers) = self.client.headers(request.url().path()) {
+                request.headers_mut().extend(headers);
+            }
+
+            let response = client.execute(request).await.map_err(Error::HttpError)?;
 
             let data = response
                 .json::<Re::Response>()

@@ -4,6 +4,8 @@ pub enum Error {
     HttpError(reqwest::Error),
     #[error("serde: {0}")]
     SerdeError(serde_json::Error),
+    #[error("base URL must be an absolute HTTP(S) URL without credentials, a query, or a fragment")]
+    InvalidBaseUrl,
     #[error("invalid header value: {0}")]
     InvalidHeaderValue(#[from] reqwest::header::InvalidHeaderValue),
     #[error("secret: {0}")]
