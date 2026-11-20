@@ -46,7 +46,13 @@ use crate::{
     ui::{
         GlobalToast,
         models::SETTINGS,
-        provider::tu_item::TuItem,
+        provider::tu_item::{
+            TuItem,
+            item_type::{
+                EPISODE,
+                MOVIE,
+            },
+        },
         widgets::{
             check_row::CheckRow,
             item::SelectedVideoSubInfo,
@@ -650,7 +656,14 @@ impl MPVPage {
             return;
         }
 
-        let is_episode = item.season_name().is_some() || item.series_name().is_some();
+        let (tmdb_item_id, is_episode) = match item.item_type().as_str() {
+            MOVIE => (Some(item_id.clone()), false),
+            EPISODE => (item.series_id().filter(|id| !id.is_empty()), true),
+            _ => (
+                None,
+                item.season_name().is_some() || item.series_name().is_some(),
+            ),
+        };
         let anime = Self::danmaku_search_title(item);
         let episode = is_episode
             .then(|| item.index_number())
@@ -674,10 +687,49 @@ impl MPVPage {
                     return;
                 }
 
-                let search_client = client.clone();
-                let search_result =
-                    spawn_tokio(async move { search_client.search_episode(params).await }).await;
+                let mut search_result = Ok(None);
+                if let Some(tmdb_item_id) = tmdb_item_id {
+                    let tmdb_id = spawn_tokio(async move {
+                        JELLYFIN_CLIENT
+                            .get_item_info(&tmdb_item_id)
+                            .await
+                            .ok()?
+                            .provider_ids?
+                            .tmdb?
+                            .trim()
+                            .parse::<i32>()
+                            .ok()
+                            .filter(|&id| id > 0)
+                    })
+                    .await;
+                    if !obj.is_current_danmaku_request(generation, &item_id) {
+                        return;
+                    }
 
+                    if let Some(tmdb_id) = tmdb_id {
+                        let tmdb_params = SearchSearchEpisodesParams {
+                            anime: None,
+                            tmdb_id: Some(tmdb_id),
+                            ..params.clone()
+                        };
+                        let search_client = client.clone();
+                        search_result =
+                            spawn_tokio(
+                                async move { search_client.search_episode(tmdb_params).await },
+                            )
+                            .await;
+                        if !obj.is_current_danmaku_request(generation, &item_id) {
+                            return;
+                        }
+                    }
+                }
+
+                if !matches!(search_result, Ok(Some(_))) {
+                    let search_client = client.clone();
+                    search_result =
+                        spawn_tokio(async move { search_client.search_episode(params).await })
+                            .await;
+                }
                 if !obj.is_current_danmaku_request(generation, &item_id) {
                     return;
                 }

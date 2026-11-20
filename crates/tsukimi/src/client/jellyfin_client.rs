@@ -548,7 +548,7 @@ impl JellyfinClient {
     pub async fn get_item_info(&self, id: &str) -> Result<SimpleListItem> {
         let s = self.session();
         let path = format!("Users/{}/Items/{}", s.account.user_id, id);
-        let params = [("Fields", "ShareLevel")];
+        let params = [("Fields", "ShareLevel,ProviderIds")];
         self.request(&path, &params).await
     }
 
