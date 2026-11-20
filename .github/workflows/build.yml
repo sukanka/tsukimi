@@ -37,9 +37,14 @@ jobs:
     uses: ./.github/workflows/build_linux.yml
     secrets: inherit
 
+  archlinux:
+    name: Arch Linux
+    uses: ./.github/workflows/build_archlinux.yml
+    secrets: inherit
+
   artifacts:
     name: Artifacts
     if: ${{ github.event_name != 'pull_request' }}
     uses: ./.github/workflows/artifacts.yml
-    needs: [linux]
+    needs: [linux, archlinux]
     secrets: inherit
