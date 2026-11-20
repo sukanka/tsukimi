@@ -62,12 +62,49 @@ use crate::{
         spawn,
         spawn_g_timeout,
         spawn_tokio,
+        spawn_tokio_blocking,
     },
 };
 
 const MIN_MOTION_TIME: i64 = 100000;
 const PREV_CHAPTER_KEY: gtk::gdk::Key = gtk::gdk::Key::Page_Down;
 const NEXT_CHAPTER_KEY: gtk::gdk::Key = gtk::gdk::Key::Page_Up;
+const MAX_EXTERNAL_DANMAKU_BYTES: usize = 16 * 1024 * 1024;
+
+async fn fetch_danmaku_track(uri: &str) -> anyhow::Result<Vec<Danmaku>> {
+    let stream = gio::File::for_uri(uri)
+        .read_future(glib::Priority::DEFAULT)
+        .await?;
+    let mut bytes = Vec::new();
+    loop {
+        let chunk = stream
+            .read_bytes_future(64 * 1024, glib::Priority::DEFAULT)
+            .await?;
+        if chunk.is_empty() {
+            break;
+        }
+        if bytes.len() + chunk.len() > MAX_EXTERNAL_DANMAKU_BYTES {
+            let _ = stream.close_future(glib::Priority::DEFAULT).await;
+            anyhow::bail!("External danmaku track exceeds the 16 MiB limit");
+        }
+        bytes.extend_from_slice(chunk.as_ref());
+    }
+    stream.close_future(glib::Priority::DEFAULT).await?;
+
+    spawn_tokio_blocking(move || -> anyhow::Result<_> {
+        let mut danmaku = parse_bilibili_xml(std::str::from_utf8(&bytes)?)?;
+        danmaku
+            .retain(|item| !item.content.is_empty() && item.start.is_finite() && item.start >= 0.0);
+        Ok(danmaku)
+    })
+    .await
+}
+
+struct ExternalDanmaku {
+    uri: String,
+    // Keep the observed URI after fallback or a manual override to deduplicate track updates.
+    preferred: bool,
+}
 
 fn danmaku_timeline(items: &[Danmaku]) -> Vec<f64> {
     items
@@ -283,6 +320,7 @@ mod imp {
         pub last_nonzero_volume: Cell<f64>,
         pub danmaku_count: Cell<usize>,
         pub danmaku_generation: Cell<u64>,
+        pub(super) external_danmaku: RefCell<Option<ExternalDanmaku>>,
         // A parked file is still loaded, but its generation is no longer current.
         pub file_loaded: Cell<bool>,
         pub(super) playback_key: RefCell<Option<PlaybackCacheKey>>,
@@ -484,6 +522,102 @@ impl MPVPage {
                 .is_some_and(|item| item.id() == item_id)
     }
 
+    pub(super) fn external_danmaku_source(&self) -> Option<String> {
+        self.imp()
+            .external_danmaku
+            .borrow()
+            .as_ref()
+            .filter(|track| track.preferred)
+            .map(|track| track.uri.clone())
+    }
+
+    fn load_external_danmaku_track(&self, track: Option<DanmakuTrack>) {
+        let imp = self.imp();
+        let uri = track.map(|track| track.external_url);
+        if imp
+            .external_danmaku
+            .borrow()
+            .as_ref()
+            .map(|track| track.uri.as_str())
+            == uri.as_deref()
+        {
+            return;
+        }
+
+        let removed = uri.is_none();
+        let previous = imp.external_danmaku.replace(uri.map(|uri| ExternalDanmaku {
+            uri,
+            preferred: true,
+        }));
+        if removed && previous.is_some_and(|track| !track.preferred) {
+            return;
+        }
+        if let Some(item) = self.current_video() {
+            self.refresh_danmaku_source(&item, imp.danmaku_popover_content.enabled());
+        }
+    }
+
+    fn refresh_danmaku_source(&self, item: &TuItem, enabled: bool) {
+        let status = if let Some(uri) = self.external_danmaku_source() {
+            if enabled {
+                self.load_external_danmaku(uri, item.id());
+                return;
+            }
+            DanmakuPopoverStatus::Idle
+        } else if let Some(client) = DanmakuClient::instance() {
+            if enabled {
+                self.auto_search_danmaku(client, item);
+                return;
+            }
+            DanmakuPopoverStatus::Idle
+        } else {
+            DanmakuPopoverStatus::SecretNotExist
+        };
+        self.next_danmaku_generation();
+        self.clear_danmaku(status);
+    }
+
+    fn load_external_danmaku(&self, uri: String, item_id: String) {
+        let generation = self.next_danmaku_generation();
+        self.clear_danmaku(DanmakuPopoverStatus::Loading);
+        spawn(glib::clone!(
+            #[weak(rename_to = obj)]
+            self,
+            async move {
+                if !obj.is_current_danmaku_request(generation, &item_id) {
+                    return;
+                }
+                let result = fetch_danmaku_track(&uri).await;
+                if !obj.is_current_danmaku_request(generation, &item_id) {
+                    return;
+                }
+                match result {
+                    Ok(danmaku) if !danmaku.is_empty() => {
+                        let status = DanmakuPopoverStatus::ExternalLoaded(
+                            danmaku.len(),
+                            gettext("External danmaku track"),
+                        );
+                        obj.apply_danmaku(danmaku, status);
+                    }
+                    _ => {
+                        tracing::warn!("External danmaku track failed to load or was empty");
+                        obj.fallback_from_external_danmaku();
+                    }
+                }
+            }
+        ));
+    }
+
+    fn fallback_from_external_danmaku(&self) {
+        let imp = self.imp();
+        if let Some(track) = imp.external_danmaku.borrow_mut().as_mut() {
+            track.preferred = false;
+        }
+        if let Some(item) = self.current_video() {
+            self.refresh_danmaku_source(&item, imp.danmaku_popover_content.enabled());
+        }
+    }
+
     fn danmaku_search_title(item: &TuItem) -> String {
         item.season_name()
             .filter(|name| !name.trim().is_empty())
@@ -574,7 +708,8 @@ impl MPVPage {
 
                 match comments_result {
                     Ok(Some(danmaku)) if !danmaku.is_empty() => {
-                        obj.apply_danmaku(danmaku, item_name, false)
+                        let status = DanmakuPopoverStatus::Loaded(danmaku.len(), item_name);
+                        obj.apply_danmaku(danmaku, status);
                     }
                     Ok(_) => {
                         obj.clear_danmaku(DanmakuPopoverStatus::NoMatching);
@@ -606,18 +741,12 @@ impl MPVPage {
         }
     }
 
-    fn apply_danmaku(&self, danmaku: Vec<Danmaku>, item_name: String, manual: bool) {
+    fn apply_danmaku(&self, danmaku: Vec<Danmaku>, status: DanmakuPopoverStatus) {
         let imp = self.imp();
-        let count = danmaku.len();
+        imp.danmaku_count.set(danmaku.len());
         imp.video_scale
             .set_danmaku_timeline(danmaku_timeline(&danmaku));
         imp.danmakw.load_danmaku(danmaku);
-        imp.danmaku_count.set(count);
-        let status = if manual {
-            DanmakuPopoverStatus::ManualLoaded(count, item_name)
-        } else {
-            DanmakuPopoverStatus::Loaded(count, item_name)
-        };
         imp.danmaku_popover_content.set_status(status);
         self.update_danmaku_rendering(imp.danmaku_popover_content.enabled());
     }
@@ -630,7 +759,11 @@ impl MPVPage {
         };
         let item_id = current_item.id();
         let generation = self.next_danmaku_generation();
-        self.clear_danmaku(DanmakuPopoverStatus::Loading);
+        let external_source = self.external_danmaku_source();
+        let keep_external = self.has_danmaku() && external_source.is_some();
+        if !keep_external {
+            self.clear_danmaku(DanmakuPopoverStatus::Loading);
+        }
 
         let comments_result =
             spawn_tokio(async move { client.get_comments(episode_id).await }).await;
@@ -639,20 +772,26 @@ impl MPVPage {
             anyhow::bail!("The current video changed while loading danmaku");
         }
 
-        match comments_result {
+        let (status, result) = match comments_result {
             Ok(Some(danmaku)) if !danmaku.is_empty() => {
-                self.apply_danmaku(danmaku, item_name, true);
-                Ok(true)
+                if let Some(track) = self.imp().external_danmaku.borrow_mut().as_mut() {
+                    track.preferred = false;
+                }
+                let status = DanmakuPopoverStatus::ManualLoaded(danmaku.len(), item_name);
+                self.apply_danmaku(danmaku, status);
+                return Ok(true);
             }
-            Ok(_) => {
-                self.clear_danmaku(DanmakuPopoverStatus::NoMatching);
-                Ok(false)
-            }
-            Err(error) => {
-                self.clear_danmaku(DanmakuPopoverStatus::Unavailable);
-                Err(error)
+            Ok(_) => (DanmakuPopoverStatus::NoMatching, Ok(false)),
+            Err(error) => (DanmakuPopoverStatus::Unavailable, Err(error)),
+        };
+        if !keep_external {
+            if let Some(uri) = external_source {
+                self.load_external_danmaku(uri, item_id);
+            } else {
+                self.clear_danmaku(status);
             }
         }
+        result
     }
 
     fn clear_danmaku(&self, status: DanmakuPopoverStatus) {
@@ -683,10 +822,8 @@ impl MPVPage {
 
     pub fn on_danmaku_switch_state_set(&self, state: bool) {
         if state && !self.has_danmaku() {
-            if let Some(item) = self.current_video()
-                && let Some(client) = DanmakuClient::instance()
-            {
-                self.auto_search_danmaku(client, &item);
+            if let Some(item) = self.current_video() {
+                self.refresh_danmaku_source(&item, true);
             }
             return;
         }
@@ -756,6 +893,7 @@ impl MPVPage {
         imp.file_loaded.set(false);
         imp.back.take();
         imp.media_source_fallback.take();
+        imp.external_danmaku.take();
         self.remove_timeout();
         self.next_danmaku_generation();
         self.clear_danmaku(DanmakuPopoverStatus::Idle);
@@ -831,6 +969,9 @@ impl MPVPage {
         let generation = self.next_play_generation();
         imp.playback_key.replace(Some(key));
         imp.file_loaded.set(resume_cached);
+        if !resume_cached {
+            imp.external_danmaku.take();
+        }
 
         let track_list_changed = self.mpris_track_list_changed(&episode_list);
 
@@ -845,15 +986,7 @@ impl MPVPage {
         }
         self.notify_track_changed();
         if !resume_cached || !self.has_danmaku() {
-            if let Some(client) = DanmakuClient::instance() {
-                if SETTINGS.mpv_danmaku_enabled() {
-                    self.auto_search_danmaku(client, &item);
-                } else {
-                    self.clear_danmaku(DanmakuPopoverStatus::Idle);
-                }
-            } else {
-                self.clear_danmaku(DanmakuPopoverStatus::SecretNotExist);
-            }
+            self.refresh_danmaku_source(&item, SETTINGS.mpv_danmaku_enabled());
         }
         self.load_skippable_segments(id.clone(), generation);
 
@@ -1296,7 +1429,8 @@ impl MPVPage {
                         ListenEvent::FileLoaded => {
                             obj.on_file_loaded();
                         }
-                        ListenEvent::TrackList(value) => {
+                        ListenEvent::TrackList(mut value) => {
+                            obj.load_external_danmaku_track(value.danmaku_track.take());
                             obj.set_audio_and_video_tracks_dropdown(value).await;
                         }
                         ListenEvent::DemuxerCacheTime(value) => {
@@ -1495,6 +1629,7 @@ impl MPVPage {
         if self.request_is_current(generation) {
             return Some(generation);
         }
+        imp.external_danmaku.take();
         if let Some(url) = imp.pending_url.take()
             && self.request_is_current(imp.play_generation.get())
         {
@@ -1507,6 +1642,9 @@ impl MPVPage {
         let Some(generation) = self.finish_mpv_load() else {
             return;
         };
+        self.imp().external_danmaku.take();
+        self.next_danmaku_generation();
+        self.clear_danmaku(DanmakuPopoverStatus::Idle);
         self.remove_timeout();
         self.update_seeking(false, 0.0);
         self.update_danmaku_rendering(false);
@@ -1541,6 +1679,7 @@ impl MPVPage {
             && let Some(fallback) = self.imp().media_source_fallback.take()
         {
             tracing::info!("Direct media path failed; retrying through the media server");
+            self.load_external_danmaku_track(None);
             match fallback {
                 MediaSourceFallback::DirectPlay(url) => self.load_mpv_file(url),
                 MediaSourceFallback::PlaybackInfo => {
@@ -1805,6 +1944,7 @@ impl MPVPage {
             imp.video.park_cached();
         } else {
             imp.back.take();
+            imp.external_danmaku.take();
             self.clear_danmaku(DanmakuPopoverStatus::Idle);
             self.cancel_mpv_load();
         }
