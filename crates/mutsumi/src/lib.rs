@@ -13,7 +13,7 @@ pub fn force_gl_renderer() {
 
 pub fn enable_gdk_hdr() {
     unsafe {
-        std::env::set_var("GDK_DEBUG", "hdr");
+        std::env::set_var("GDK_DEBUG", "hdr:color-mgmt");
     }
 }
 

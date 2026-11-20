@@ -1,0 +1,36 @@
+# GTK 4.24.1: allow RGB HDR without the optional color-representation protocol.
+# Color-management already communicates primaries and transfer functions.
+# Keep matrix/range and straight-alpha validation, and the existing fallback
+# when color-management itself is unavailable. Apply to GTK with patch -p1.
+# Source: https://gitlab.gnome.org/GNOME/gtk/-/blob/4.24.1/gdk/wayland/gdkwaylandcolor.c
+
+--- a/gdk/wayland/gdkwaylandcolor.c
++++ b/gdk/wayland/gdkwaylandcolor.c
+@@ -1317,7 +1317,25 @@
+   if (!self->color->color_representation_manager)
+     {
+-      if (!gdk_color_state_equivalent (cs, default_cs))
++      const GdkCicp *cicp = gdk_color_state_get_cicp (cs);
++      const GdkCicp *default_cicp = gdk_color_state_get_cicp (default_cs);
++      gboolean default_representation = FALSE;
++
++      /* Primaries and transfer functions are handled by color-management.
++       * Without color-representation only the matrix and range must match
++       * the buffer format defaults. Otherwise ordinary RGB HDR is rejected.
++       */
++      if (cicp != NULL && default_cicp != NULL)
+         {
+-          g_set_error_literal (error, G_IO_ERROR, G_IO_ERROR_FAILED, "No color-representation, non-default color state");
++          GdkCicp normalized, default_normalized;
++
++          gdk_cicp_normalize (cicp, &normalized);
++          gdk_cicp_normalize (default_cicp, &default_normalized);
++          default_representation = normalized.matrix_coefficients == default_normalized.matrix_coefficients &&
++                                   normalized.range == default_normalized.range;
++        }
++
++      if (!default_representation)
++        {
++          g_set_error_literal (error, G_IO_ERROR, G_IO_ERROR_FAILED, "No color-representation, non-default matrix or range");
+           return FALSE;
+         }
