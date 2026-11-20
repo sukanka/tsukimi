@@ -9,9 +9,13 @@ use gtk::{
 };
 
 use crate::ui::{
+    GlobalToast,
     models::SETTINGS,
     mpv::{
-        danmaku_client::DanmakuClient,
+        danmaku_client::{
+            DanmakuClient,
+            OFFICIAL_SERVER_NAME,
+        },
         danmaku_search_dialog::DanmakuSearchDialog,
         page::MPVPage,
     },
@@ -21,10 +25,10 @@ use crate::ui::{
 #[boxed_type(name = "TsukimiDanmakuPopoverStatus")]
 pub enum DanmakuPopoverStatus {
     Searching,
-    Loaded(usize, String),
+    Loaded(usize, String, String),
     Loading,
     NoMatching,
-    ManualLoaded(usize, String),
+    ManualLoaded(usize, String, String),
     ExternalLoaded(usize, String),
     SecretNotExist,
     #[default]
@@ -36,8 +40,8 @@ pub enum DanmakuPopoverStatus {
 impl DanmakuPopoverStatus {
     pub fn title(&self) -> String {
         match self {
-            DanmakuPopoverStatus::Loaded(i, _)
-            | DanmakuPopoverStatus::ManualLoaded(i, _)
+            DanmakuPopoverStatus::Loaded(i, ..)
+            | DanmakuPopoverStatus::ManualLoaded(i, ..)
             | DanmakuPopoverStatus::ExternalLoaded(i, _) => {
                 gettext("{count} Danmaku Loaded").replace("{count}", &i.to_string())
             }
@@ -49,13 +53,11 @@ impl DanmakuPopoverStatus {
         match self {
             DanmakuPopoverStatus::Searching => gettext("Searching"),
             DanmakuPopoverStatus::Loading => gettext("Loading"),
-            DanmakuPopoverStatus::Loaded(_, item_name)
-            | DanmakuPopoverStatus::ManualLoaded(_, item_name)
+            DanmakuPopoverStatus::Loaded(_, item_name, _)
+            | DanmakuPopoverStatus::ManualLoaded(_, item_name, _)
             | DanmakuPopoverStatus::ExternalLoaded(_, item_name) => item_name.clone(),
             DanmakuPopoverStatus::NoMatching => gettext("No danmaku found"),
-            DanmakuPopoverStatus::SecretNotExist => {
-                gettext("This feature requires an official build")
-            }
+            DanmakuPopoverStatus::SecretNotExist => gettext("Danmaku source unavailable"),
             DanmakuPopoverStatus::Idle => gettext("Not loaded"),
             DanmakuPopoverStatus::Disabled => gettext("Disabled"),
             DanmakuPopoverStatus::Unavailable => gettext("Maybe there is something wrong"),
@@ -64,9 +66,11 @@ impl DanmakuPopoverStatus {
 
     pub fn status_title(&self) -> String {
         match self {
-            DanmakuPopoverStatus::Loaded(..) => gettext("From 弹弹play开放弹幕网络 (Auto Matched)"),
-            DanmakuPopoverStatus::ManualLoaded(..) => {
-                gettext("From 弹弹play开放弹幕网络 (Manually Matched)")
+            DanmakuPopoverStatus::Loaded(.., source) => {
+                gettext("From {source} (Auto Matched)").replace("{source}", source)
+            }
+            DanmakuPopoverStatus::ManualLoaded(.., source) => {
+                gettext("From {source} (Manually Matched)").replace("{source}", source)
             }
             DanmakuPopoverStatus::ExternalLoaded(..) => gettext("From external danmaku track"),
             _ => String::new(),
@@ -135,6 +139,8 @@ pub mod imp {
         pub danmaku_status_stack: TemplateChild<gtk::Stack>,
         #[template_child]
         pub danmaku_status_icon: TemplateChild<gtk::Image>,
+        #[template_child]
+        pub danmaku_source_combo: TemplateChild<adw::ComboRow>,
         #[template_child]
         pub manual_search_button: TemplateChild<adw::ButtonRow>,
         #[template_child]
@@ -231,7 +237,12 @@ pub mod imp {
         }
     }
 
-    impl WidgetImpl for DanmakuPopover {}
+    impl WidgetImpl for DanmakuPopover {
+        fn map(&self) {
+            self.obj().reload_danmaku_sources();
+            self.parent_map();
+        }
+    }
 
     impl BinImpl for DanmakuPopover {}
 }
@@ -303,15 +314,51 @@ impl DanmakuPopover {
             .build();
     }
 
+    fn saved_source_row(row: &adw::ComboRow) -> u32 {
+        let selected = SETTINGS.danmaku_active_server().saturating_add(1) as u32;
+        row.model()
+            .filter(|model| selected < model.n_items())
+            .map_or(0, |_| selected)
+    }
+
+    fn reload_danmaku_sources(&self) {
+        let model = gtk::StringList::new(&[OFFICIAL_SERVER_NAME]);
+        for server in SETTINGS.danmaku_servers() {
+            model.append(&server.name);
+        }
+        let row = &*self.imp().danmaku_source_combo;
+        let _notify = row.freeze_notify();
+        row.set_model(Some(&model));
+        row.set_selected(Self::saved_source_row(row));
+    }
+
+    #[template_callback]
+    fn on_danmaku_source_selected(&self) {
+        let row = &*self.imp().danmaku_source_combo;
+        let selected = row.selected();
+        let saved = Self::saved_source_row(row);
+        if selected == gtk::INVALID_LIST_POSITION || selected == saved {
+            return;
+        }
+        if SETTINGS
+            .set_danmaku_active_server(selected as i32 - 1)
+            .is_err()
+        {
+            row.set_selected(saved);
+            self.toast(gettext("Failed to select danmaku server."));
+        } else if let Some(page) = self.imp().page.upgrade() {
+            page.on_danmaku_source_changed();
+        }
+    }
+
     #[template_callback]
     fn on_manual_search(&self) {
-        let Some(client) = DanmakuClient::instance() else {
-            return;
-        };
-        let Some(page) = self.imp().page.upgrade() else {
-            return;
-        };
-        DanmakuSearchDialog::new(&page, client).present(Some(self));
+        if let Some(page) = self.imp().page.upgrade()
+            && let Some(client) = DanmakuClient::instance()
+            && let Some(dialog) = DanmakuSearchDialog::new(&page, client)
+        {
+            dialog.present(Some(self));
+        }
     }
 
     #[template_callback]

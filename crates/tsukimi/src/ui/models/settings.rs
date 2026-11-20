@@ -9,6 +9,11 @@ use gtk::{
     prelude::*,
 };
 
+use serde::{
+    Deserialize,
+    Serialize,
+};
+
 use crate::{
     APP_ID,
     client::Account,
@@ -17,6 +22,12 @@ use crate::{
         VecSerialize,
     },
 };
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct DanmakuServer {
+    pub name: String,
+    pub url: String,
+}
 
 pub struct Settings(ThreadGuard<gio::Settings>);
 
@@ -89,6 +100,10 @@ impl Settings {
     const KEY_MPV_DANMAKU_SHADOW_OFFSET: &'static str = "mpv-danmaku-shadow-offset";
     const KEY_REC2100_PQ_ENABLED: &'static str = "is-rec2100-pq-enabled";
     const KEY_DANMAKU_CACHE_MAP: &'static str = "danmaku-cache-map";
+    const KEY_DANMAKU_SERVERS: &'static str = "danmaku-servers";
+    const KEY_DANMAKU_ACTIVE_SERVER: &'static str = "danmaku-active-server";
+    const KEY_DANMAKU_APP_ID: &'static str = "danmaku-appid";
+    const KEY_DANMAKU_APP_SECRET: &'static str = "danmaku-appsecret";
 
     fn bind_setting(&self, key: &str, object: &impl IsA<glib::Object>, property: &str) {
         self.bind(key, object, property).build();
@@ -146,6 +161,41 @@ impl Settings {
 
     pub fn set_danmaku_cache_map(&self, value: &str) -> Result<(), glib::BoolError> {
         self.set_string(Self::KEY_DANMAKU_CACHE_MAP, value)
+    }
+
+    pub fn danmaku_servers(&self) -> Vec<DanmakuServer> {
+        serde_json::from_str(self.string(Self::KEY_DANMAKU_SERVERS).as_ref()).unwrap_or_default()
+    }
+
+    pub fn danmaku_active_server(&self) -> i32 {
+        self.int(Self::KEY_DANMAKU_ACTIVE_SERVER)
+    }
+
+    pub fn set_danmaku_active_server(&self, index: i32) -> Result<(), glib::BoolError> {
+        self.set_int(Self::KEY_DANMAKU_ACTIVE_SERVER, index)
+    }
+
+    pub fn danmaku_credentials(&self) -> (String, String) {
+        (
+            self.string(Self::KEY_DANMAKU_APP_ID).to_string(),
+            self.string(Self::KEY_DANMAKU_APP_SECRET).to_string(),
+        )
+    }
+
+    pub fn save_danmaku_servers(
+        servers: &[DanmakuServer], active: i32, credentials: Option<(&str, &str)>,
+    ) -> Result<(), glib::BoolError> {
+        let value = serde_json::to_string(servers).expect("Danmaku servers are serializable");
+        let settings = Self::default();
+        settings.delay();
+        settings.set_string(Self::KEY_DANMAKU_SERVERS, &value)?;
+        settings.set_danmaku_active_server(active)?;
+        if let Some((app_id, app_secret)) = credentials {
+            settings.set_string(Self::KEY_DANMAKU_APP_ID, app_id.trim())?;
+            settings.set_string(Self::KEY_DANMAKU_APP_SECRET, app_secret.trim())?;
+        }
+        settings.apply();
+        Ok(())
     }
 
     pub fn is_overlay(&self) -> bool {

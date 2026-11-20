@@ -31,6 +31,7 @@
                         </child>
                         <child>
                           <object class="AdwActionRow" id="danmaku_status_row">
+                            <property name="use-markup">false</property>
                             <property name="subtitle" translatable="yes">Disabled</property>
                             <property name="subtitle-lines">2</property>
                             <property name="subtitle-selectable">True</property>
@@ -68,6 +69,12 @@
                     </child>
                     <child>
                       <object class="AdwPreferencesGroup">
+                        <child>
+                          <object class="AdwComboRow" id="danmaku_source_combo">
+                            <property name="title" translatable="yes">Danmaku Server</property>
+                            <signal name="notify::selected" handler="on_danmaku_source_selected" swapped="yes"/>
+                          </object>
+                        </child>
                         <child>
                           <object class="AdwButtonRow" id="manual_search_button">
                             <property name="sensitive">false</property>

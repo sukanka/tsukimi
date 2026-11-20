@@ -5,10 +5,22 @@ use serde::{
     Serialize,
 };
 
-use crate::ui::{
-    models::SETTINGS,
-    provider::tu_item::TuItem,
+use super::danmaku_client::DanmakuClient;
+use crate::{
+    client::jellyfin_client::Session,
+    ui::{
+        models::SETTINGS,
+        provider::tu_item::TuItem,
+    },
 };
+
+#[derive(Serialize)]
+struct DanmakuCacheScope<'a> {
+    account_name: &'a str,
+    user_id: &'a str,
+    endpoint: Option<&'a str>,
+    danmaku_source: String,
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CachedDanmaku {
@@ -39,8 +51,10 @@ impl DanmakuCacheMap {
         serde_json::from_str(&SETTINGS.danmaku_cache_map()).unwrap_or_default()
     }
 
-    pub fn cached_danmaku(&self, item: &TuItem) -> Option<CachedDanmaku> {
-        let entry = self.entries.get(&Self::cache_key(item)?)?;
+    pub fn cached_danmaku(
+        &self, item: &TuItem, session: &Session, client: &DanmakuClient,
+    ) -> Option<CachedDanmaku> {
+        let entry = self.entries.get(&Self::cache_key(item, session, client)?)?;
         let episode_id = match entry {
             DanmakuCacheEntry::Series {
                 season,
@@ -70,8 +84,9 @@ impl DanmakuCacheMap {
 
     pub fn remember_manual_selection(
         &mut self, current_item: &TuItem, selected_episode: &TuItem, available_episodes: &[TuItem],
+        session: &Session, client: &DanmakuClient,
     ) -> anyhow::Result<()> {
-        let key = Self::cache_key(current_item)
+        let key = Self::cache_key(current_item, session, client)
             .ok_or_else(|| anyhow::anyhow!("Current item has no stable cache key"))?;
         let selected_episode_id = Self::episode_id(selected_episode)?;
 
@@ -112,7 +127,25 @@ impl DanmakuCacheMap {
         Ok(())
     }
 
-    fn cache_key(item: &TuItem) -> Option<String> {
+    fn cache_key(item: &TuItem, session: &Session, client: &DanmakuClient) -> Option<String> {
+        let media_key = Self::media_key(item)?;
+        let (url, app_id) = client.source_identity();
+        // Keep master keys for identities the original format can encode unambiguously.
+        let danmaku_source = if url.contains('|') || app_id == Some("anonymous") {
+            serde_json::to_string(&(url, app_id)).ok()?
+        } else {
+            format!("{url}|{}", app_id.unwrap_or("anonymous"))
+        };
+        let scope = DanmakuCacheScope {
+            account_name: &session.account.servername,
+            user_id: &session.account.user_id,
+            endpoint: session.url_headers.as_ref().map(|(url, _)| url.as_str()),
+            danmaku_source,
+        };
+        serde_json::to_string(&("v2", scope, media_key)).ok()
+    }
+
+    fn media_key(item: &TuItem) -> Option<String> {
         if item.series_name().is_some() {
             if let Some(series_id) = item.series_id().filter(|id| !id.is_empty()) {
                 return Some(format!("series-id:{series_id}"));

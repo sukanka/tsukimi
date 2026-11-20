@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use adw::prelude::*;
 use dandanapi_client::SearchSearchEpisodesParams;
 use gettextrs::gettext;
@@ -34,6 +36,7 @@ use crate::{
         jellyfin_client::{
             BackType,
             JELLYFIN_CLIENT,
+            Session,
         },
         structs::{
             Back,
@@ -134,12 +137,18 @@ struct PlaybackCacheKey {
 }
 
 impl PlaybackCacheKey {
-    fn matches_session(&self) -> bool {
-        let session = JELLYFIN_CLIENT.session();
+    fn matches_session(&self, session: &Session) -> bool {
         self.account_name == session.account.servername
             && self.user_id == session.account.user_id
             && self.endpoint.as_ref() == session.url_headers.as_ref().map(|(url, _)| url)
     }
+}
+
+#[derive(Clone)]
+pub(super) struct DanmakuRequest {
+    pub(super) generation: u64,
+    pub(super) item: TuItem,
+    pub(super) session: Arc<Session>,
 }
 
 #[derive(Clone, Copy)]
@@ -514,18 +523,31 @@ impl MPVPage {
         Object::new()
     }
 
-    fn next_danmaku_generation(&self) -> u64 {
+    pub(super) fn next_danmaku_generation(&self) -> u64 {
         let generation = self.imp().danmaku_generation.get().wrapping_add(1);
         self.imp().danmaku_generation.set(generation);
         generation
     }
 
-    fn is_current_danmaku_request(&self, generation: u64, item_id: &str) -> bool {
-        self.imp().danmaku_generation.get() == generation
-            && self
-                .current_video()
-                .as_ref()
-                .is_some_and(|item| item.id() == item_id)
+    pub(super) fn danmaku_request(&self) -> Option<DanmakuRequest> {
+        let imp = self.imp();
+        let item = self.current_video()?;
+        let session = JELLYFIN_CLIENT.session.load_full();
+        imp.playback_key
+            .borrow()
+            .as_ref()
+            .is_some_and(|key| key.matches_session(&session))
+            .then(|| DanmakuRequest {
+                generation: imp.danmaku_generation.get(),
+                item,
+                session,
+            })
+    }
+
+    pub(super) fn is_current_danmaku_request(&self, request: &DanmakuRequest) -> bool {
+        self.imp().danmaku_generation.get() == request.generation
+            && self.current_video().as_ref() == Some(&request.item)
+            && Arc::ptr_eq(&request.session, &JELLYFIN_CLIENT.session())
     }
 
     pub(super) fn external_danmaku_source(&self) -> Option<String> {
@@ -558,43 +580,55 @@ impl MPVPage {
         if removed && previous.is_some_and(|track| !track.preferred) {
             return;
         }
-        if let Some(item) = self.current_video() {
-            self.refresh_danmaku_source(&item, imp.danmaku_popover_content.enabled());
+        self.refresh_danmaku_source(imp.danmaku_popover_content.enabled());
+    }
+
+    pub(super) fn on_danmaku_source_changed(&self) {
+        if self.external_danmaku_source().is_some() && self.has_danmaku() {
+            // Keep the loaded XML track while invalidating pending online requests.
+            self.next_danmaku_generation();
+        } else if self.current_video().is_some() {
+            self.refresh_danmaku_source(self.imp().danmaku_popover_content.enabled());
+        } else {
+            self.next_danmaku_generation();
+            self.clear_danmaku(DanmakuPopoverStatus::Idle);
         }
     }
 
-    fn refresh_danmaku_source(&self, item: &TuItem, enabled: bool) {
+    fn refresh_danmaku_source(&self, enabled: bool) {
+        let Some(mut request) = self.danmaku_request() else {
+            return;
+        };
+        request.generation = self.next_danmaku_generation();
         let status = if let Some(uri) = self.external_danmaku_source() {
             if enabled {
-                self.load_external_danmaku(uri, item.id());
+                self.load_external_danmaku(uri, request);
                 return;
             }
             DanmakuPopoverStatus::Idle
         } else if let Some(client) = DanmakuClient::instance() {
             if enabled {
-                self.auto_search_danmaku(client, item);
+                self.auto_search_danmaku(client, request);
                 return;
             }
             DanmakuPopoverStatus::Idle
         } else {
             DanmakuPopoverStatus::SecretNotExist
         };
-        self.next_danmaku_generation();
         self.clear_danmaku(status);
     }
 
-    fn load_external_danmaku(&self, uri: String, item_id: String) {
-        let generation = self.next_danmaku_generation();
+    fn load_external_danmaku(&self, uri: String, request: DanmakuRequest) {
         self.clear_danmaku(DanmakuPopoverStatus::Loading);
         spawn(glib::clone!(
             #[weak(rename_to = obj)]
             self,
             async move {
-                if !obj.is_current_danmaku_request(generation, &item_id) {
+                if !obj.is_current_danmaku_request(&request) {
                     return;
                 }
                 let result = fetch_danmaku_track(&uri).await;
-                if !obj.is_current_danmaku_request(generation, &item_id) {
+                if !obj.is_current_danmaku_request(&request) {
                     return;
                 }
                 match result {
@@ -619,9 +653,7 @@ impl MPVPage {
         if let Some(track) = imp.external_danmaku.borrow_mut().as_mut() {
             track.preferred = false;
         }
-        if let Some(item) = self.current_video() {
-            self.refresh_danmaku_source(&item, imp.danmaku_popover_content.enabled());
-        }
+        self.refresh_danmaku_source(imp.danmaku_popover_content.enabled());
     }
 
     fn danmaku_search_title(item: &TuItem) -> String {
@@ -631,22 +663,26 @@ impl MPVPage {
             .unwrap_or_else(|| item.name())
     }
 
-    fn auto_search_danmaku(&self, client: DanmakuClient, item: &TuItem) {
-        let generation = self.next_danmaku_generation();
-        let item_id = item.id();
-        if let Some(cached) = DanmakuCacheMap::load().cached_danmaku(item) {
+    fn auto_search_danmaku(&self, client: DanmakuClient, request: DanmakuRequest) {
+        let item = &request.item;
+        if let Some(cached) =
+            DanmakuCacheMap::load().cached_danmaku(item, &request.session, &client)
+        {
             self.clear_danmaku(DanmakuPopoverStatus::Loading);
             spawn_g_timeout(glib::clone!(
                 #[weak(rename_to = obj)]
                 self,
                 async move {
-                    if !obj.is_current_danmaku_request(generation, &item_id)
-                        || !obj.imp().danmaku_popover_content.enabled()
-                    {
+                    if !obj.imp().danmaku_popover_content.enabled() {
                         return;
                     }
                     if let Err(error) = obj
-                        .apply_manual_danmaku(client, cached.episode_id, cached.item_name)
+                        .apply_manual_danmaku(
+                            &request,
+                            &client,
+                            cached.episode_id,
+                            cached.item_name,
+                        )
                         .await
                     {
                         tracing::warn!("Failed to apply cached danmaku: {error}");
@@ -657,7 +693,7 @@ impl MPVPage {
         }
 
         let (tmdb_item_id, is_episode) = match item.item_type().as_str() {
-            MOVIE => (Some(item_id.clone()), false),
+            MOVIE => (Some(item.id()), false),
             EPISODE => (item.series_id().filter(|id| !id.is_empty()), true),
             _ => (
                 None,
@@ -683,7 +719,7 @@ impl MPVPage {
             #[weak(rename_to = obj)]
             self,
             async move {
-                if !obj.is_current_danmaku_request(generation, &item_id) {
+                if !obj.is_current_danmaku_request(&request) {
                     return;
                 }
 
@@ -702,7 +738,7 @@ impl MPVPage {
                             .filter(|&id| id > 0)
                     })
                     .await;
-                    if !obj.is_current_danmaku_request(generation, &item_id) {
+                    if !obj.is_current_danmaku_request(&request) {
                         return;
                     }
 
@@ -718,7 +754,7 @@ impl MPVPage {
                                 async move { search_client.search_episode(tmdb_params).await },
                             )
                             .await;
-                        if !obj.is_current_danmaku_request(generation, &item_id) {
+                        if !obj.is_current_danmaku_request(&request) {
                             return;
                         }
                     }
@@ -730,7 +766,7 @@ impl MPVPage {
                         spawn_tokio(async move { search_client.search_episode(params).await })
                             .await;
                 }
-                if !obj.is_current_danmaku_request(generation, &item_id) {
+                if !obj.is_current_danmaku_request(&request) {
                     return;
                 }
 
@@ -751,16 +787,17 @@ impl MPVPage {
                     .danmaku_popover_content
                     .set_status(DanmakuPopoverStatus::Loading);
 
+                let source = client.source().name.clone();
                 let comments_result =
                     spawn_tokio(async move { client.get_comments(episode_id).await }).await;
 
-                if !obj.is_current_danmaku_request(generation, &item_id) {
+                if !obj.is_current_danmaku_request(&request) {
                     return;
                 }
 
                 match comments_result {
                     Ok(Some(danmaku)) if !danmaku.is_empty() => {
-                        let status = DanmakuPopoverStatus::Loaded(danmaku.len(), item_name);
+                        let status = DanmakuPopoverStatus::Loaded(danmaku.len(), item_name, source);
                         obj.apply_danmaku(danmaku, status);
                     }
                     Ok(_) => {
@@ -803,25 +840,24 @@ impl MPVPage {
         self.update_danmaku_rendering(imp.danmaku_popover_content.enabled());
     }
 
-    pub async fn apply_manual_danmaku(
-        &self, client: DanmakuClient, episode_id: i64, item_name: String,
+    pub(super) async fn apply_manual_danmaku(
+        &self, request: &DanmakuRequest, client: &DanmakuClient, episode_id: i64, item_name: String,
     ) -> anyhow::Result<bool> {
-        let Some(current_item) = self.current_video() else {
-            anyhow::bail!("No video is currently playing");
-        };
-        let item_id = current_item.id();
-        let generation = self.next_danmaku_generation();
+        if !self.is_current_danmaku_request(request) {
+            return Ok(false);
+        }
         let external_source = self.external_danmaku_source();
         let keep_external = self.has_danmaku() && external_source.is_some();
         if !keep_external {
             self.clear_danmaku(DanmakuPopoverStatus::Loading);
         }
 
+        let load_client = client.clone();
         let comments_result =
-            spawn_tokio(async move { client.get_comments(episode_id).await }).await;
+            spawn_tokio(async move { load_client.get_comments(episode_id).await }).await;
 
-        if !self.is_current_danmaku_request(generation, &item_id) {
-            anyhow::bail!("The current video changed while loading danmaku");
+        if !self.is_current_danmaku_request(request) {
+            return Ok(false);
         }
 
         let (status, result) = match comments_result {
@@ -829,7 +865,11 @@ impl MPVPage {
                 if let Some(track) = self.imp().external_danmaku.borrow_mut().as_mut() {
                     track.preferred = false;
                 }
-                let status = DanmakuPopoverStatus::ManualLoaded(danmaku.len(), item_name);
+                let status = DanmakuPopoverStatus::ManualLoaded(
+                    danmaku.len(),
+                    item_name,
+                    client.source().name.clone(),
+                );
                 self.apply_danmaku(danmaku, status);
                 return Ok(true);
             }
@@ -838,7 +878,7 @@ impl MPVPage {
         };
         if !keep_external {
             if let Some(uri) = external_source {
-                self.load_external_danmaku(uri, item_id);
+                self.load_external_danmaku(uri, request.clone());
             } else {
                 self.clear_danmaku(status);
             }
@@ -874,9 +914,7 @@ impl MPVPage {
 
     pub fn on_danmaku_switch_state_set(&self, state: bool) {
         if state && !self.has_danmaku() {
-            if let Some(item) = self.current_video() {
-                self.refresh_danmaku_source(&item, true);
-            }
+            self.refresh_danmaku_source(true);
             return;
         }
 
@@ -909,7 +947,7 @@ impl MPVPage {
                 .playback_key
                 .borrow()
                 .as_ref()
-                .is_some_and(PlaybackCacheKey::matches_session)
+                .is_some_and(|key| key.matches_session(&JELLYFIN_CLIENT.session()))
     }
 
     fn has_current_mpv_load(&self) -> bool {
@@ -1037,8 +1075,8 @@ impl MPVPage {
             }
         }
         self.notify_track_changed();
-        if !resume_cached || !self.has_danmaku() {
-            self.refresh_danmaku_source(&item, SETTINGS.mpv_danmaku_enabled());
+        if !resume_cached || !self.has_danmaku() || self.external_danmaku_source().is_none() {
+            self.refresh_danmaku_source(SETTINGS.mpv_danmaku_enabled());
         }
         self.load_skippable_segments(id.clone(), generation);
 

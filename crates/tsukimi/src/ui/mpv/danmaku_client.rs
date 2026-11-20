@@ -1,29 +1,93 @@
 use std::{
     ops::Deref,
-    sync::OnceLock,
+    sync::Once,
 };
 
 use dandanapi_client::*;
 use mutsumi::Danmaku;
 
-use crate::ui::mpv::danmaku::DanmakuExt;
+use crate::ui::{
+    models::{
+        SETTINGS,
+        settings::DanmakuServer,
+    },
+    mpv::danmaku::DanmakuExt,
+};
 
 const X_APPID: &str = "e9imrhcexn";
+pub(crate) const OFFICIAL_SERVER_NAME: &str = "DanDanPlay";
 
 #[derive(Clone)]
-pub struct DanmakuClient(DanDanClient);
+pub struct DanmakuClient {
+    client: DanDanClient,
+    source: DanmakuServer,
+    app_id: Option<String>,
+}
 
 impl DanmakuClient {
     pub fn instance() -> Option<Self> {
-        static CLIENT: OnceLock<Option<DanmakuClient>> = OnceLock::new();
-        CLIENT
-            .get_or_init(|| {
-                if DanDanClient::init(X_APPID.to_string(), yzlm::yzlm()).is_err() {
-                    tracing::warn!("DanDanClient already initialized, using existing instance...");
+        let servers = SETTINGS.danmaku_servers();
+        let server = usize::try_from(SETTINGS.danmaku_active_server())
+            .ok()
+            .and_then(|index| servers.get(index));
+        match Self::for_source(server) {
+            Ok(client) => Some(client),
+            Err(error) => {
+                tracing::warn!(%error, "Invalid Danmaku source settings");
+                None
+            }
+        }
+    }
+
+    /// Builds a client using the saved global credentials. `None` selects DanDanPlay.
+    pub fn for_source(server: Option<&DanmakuServer>) -> dandanapi_client::Result<Self> {
+        let (app_id, app_secret) = SETTINGS.danmaku_credentials();
+        Self::with_source(server, &app_id, &app_secret)
+    }
+
+    pub(crate) fn with_source(
+        server: Option<&DanmakuServer>, app_id: &str, app_secret: &str,
+    ) -> dandanapi_client::Result<Self> {
+        let (app_id, app_secret) = (app_id.trim(), app_secret.trim());
+        // Older settings can store the built-in App ID by itself.
+        let credentials = (!app_secret.is_empty() || (!app_id.is_empty() && app_id != X_APPID))
+            .then_some((app_id, app_secret));
+        let (name, url) = server.map_or((OFFICIAL_SERVER_NAME, DanDanClient::BASE_URI), |server| {
+            (server.name.as_str(), server.url.as_str())
+        });
+
+        let client = if server.is_none() && credentials.is_none() {
+            static INIT: Once = Once::new();
+            INIT.call_once(|| {
+                if DanDanClient::init(X_APPID.to_owned(), yzlm::yzlm()).is_err() {
+                    tracing::warn!("DanDanClient already initialized, using existing instance");
                 }
-                Some(Self(DanDanClient::instance()))
-            })
-            .clone()
+            });
+            DanDanClient::instance()
+        } else {
+            DanDanClient::instance().with_base_url(url, credentials)?
+        };
+
+        Ok(Self {
+            source: DanmakuServer {
+                name: name.to_owned(),
+                url: client.base_uri().trim_end_matches('/').to_owned(),
+            },
+            client,
+            app_id: credentials
+                .map(|(app_id, _)| app_id)
+                .or_else(|| server.is_none().then_some(X_APPID))
+                .map(str::to_owned),
+        })
+    }
+
+    pub fn source(&self) -> &DanmakuServer {
+        &self.source
+    }
+
+    /// The normalized base URL and signing App ID of this client.
+    pub fn source_identity(&self) -> (&str, Option<&str>) {
+        (&self.source.url, self.app_id.as_deref())
     }
 }
 
@@ -31,7 +95,7 @@ impl Deref for DanmakuClient {
     type Target = DanDanClient;
 
     fn deref(&self) -> &Self::Target {
-        &self.0
+        &self.client
     }
 }
 

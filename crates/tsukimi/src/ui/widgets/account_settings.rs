@@ -7,6 +7,14 @@ use crate::{
         models::{
             SETTINGS,
             jellyfin_cache_path,
+            settings::{
+                DanmakuServer,
+                Settings,
+            },
+        },
+        mpv::danmaku_client::{
+            DanmakuClient,
+            OFFICIAL_SERVER_NAME,
         },
         provider::descriptor::{
             Descriptor,
@@ -139,6 +147,19 @@ mod imp {
         #[template_child]
         pub folder_button_content: TemplateChild<adw::ButtonContent>,
 
+        #[template_child]
+        pub danmaku_server_combo: TemplateChild<adw::ComboRow>,
+        #[template_child]
+        pub danmaku_server_name: TemplateChild<adw::EntryRow>,
+        #[template_child]
+        pub danmaku_server_url: TemplateChild<adw::EntryRow>,
+        #[template_child]
+        pub danmaku_app_id: TemplateChild<adw::EntryRow>,
+        #[template_child]
+        pub danmaku_app_secret: TemplateChild<adw::PasswordEntryRow>,
+        #[template_child]
+        pub danmaku_server_remove: TemplateChild<adw::ButtonRow>,
+
         pub now_editing_descriptor: RefCell<Option<Descriptor>>,
 
         pub descriptor_grab_x: Cell<f64>,
@@ -207,6 +228,10 @@ mod imp {
             obj.set_color();
             obj.bind_settings();
             obj.refersh_descriptors();
+            let (app_id, app_secret) = SETTINGS.danmaku_credentials();
+            self.danmaku_app_id.set_text(&app_id);
+            self.danmaku_app_secret.set_text(&app_secret);
+            obj.reload_danmaku_servers();
         }
     }
 
@@ -253,6 +278,116 @@ impl AccountSettings {
                 self.toast(format!("{}: {}", gettext("Failed to change password"), e));
             }
         };
+    }
+
+    fn reload_danmaku_servers(&self) {
+        let servers = SETTINGS.danmaku_servers();
+        let model = gtk::StringList::new(&[OFFICIAL_SERVER_NAME]);
+        for server in &servers {
+            model.append(&server.name);
+        }
+        model.append(&gettext("Add Server…"));
+
+        let active = SETTINGS.danmaku_active_server();
+        let selected = if (0..servers.len() as i32).contains(&active) {
+            active as u32 + 1
+        } else {
+            0
+        };
+        let combo = &self.imp().danmaku_server_combo;
+        combo.set_model(Some(&model));
+        combo.set_selected(selected);
+        self.on_danmaku_server_selected();
+    }
+
+    #[template_callback]
+    fn on_danmaku_server_selected(&self) {
+        let imp = self.imp();
+        let servers = SETTINGS.danmaku_servers();
+        let selected = imp.danmaku_server_combo.selected() as usize;
+        let server = selected.checked_sub(1).and_then(|index| servers.get(index));
+        let editing = server.is_some() || selected == servers.len() + 1;
+        imp.danmaku_server_name.set_visible(editing);
+        imp.danmaku_server_url.set_visible(editing);
+        imp.danmaku_server_remove.set_visible(server.is_some());
+        imp.danmaku_server_name
+            .set_text(server.map_or("", |server| server.name.as_str()));
+        imp.danmaku_server_url
+            .set_text(server.map_or("", |server| server.url.as_str()));
+    }
+
+    #[template_callback]
+    fn on_danmaku_save(&self) {
+        let imp = self.imp();
+        let mut servers = SETTINGS.danmaku_servers();
+        let selected = imp.danmaku_server_combo.selected() as usize;
+        if selected > servers.len() + 1 {
+            return;
+        }
+        let server = (selected > 0).then(|| DanmakuServer {
+            name: imp.danmaku_server_name.text().trim().to_owned(),
+            url: imp.danmaku_server_url.text().to_string(),
+        });
+        if server.as_ref().is_some_and(|server| server.name.is_empty()) {
+            self.toast(gettext("Server name cannot be empty."));
+            return;
+        }
+
+        let app_id = imp.danmaku_app_id.text();
+        let app_secret = imp.danmaku_app_secret.text();
+        let client = match DanmakuClient::with_source(server.as_ref(), &app_id, &app_secret) {
+            Ok(client) => client,
+            Err(error) => {
+                self.toast(format!("{}: {error}", gettext("Invalid Danmaku settings")));
+                return;
+            }
+        };
+        if let Some(index) = selected.checked_sub(1) {
+            let source = client.source();
+            let (url, _) = client.source_identity();
+            if servers.iter().enumerate().any(|(other_index, other)| {
+                other_index != index
+                    && (other.name.eq_ignore_ascii_case(&source.name) || other.url == url)
+            }) {
+                self.toast(gettext("A server with this name or URL already exists."));
+                return;
+            }
+            if index == servers.len() {
+                servers.push(source.clone());
+            } else {
+                servers[index] = source.clone();
+            }
+        }
+        self.save_danmaku_servers(&servers, selected as i32 - 1, Some((&app_id, &app_secret)));
+    }
+
+    #[template_callback]
+    fn on_danmaku_remove(&self) {
+        let mut servers = SETTINGS.danmaku_servers();
+        let index = self.imp().danmaku_server_combo.selected() as i32 - 1;
+        if !(0..servers.len() as i32).contains(&index) {
+            return;
+        }
+        servers.remove(index as usize);
+        let active = SETTINGS.danmaku_active_server();
+        let active = if active == index {
+            -1
+        } else {
+            active - i32::from(active > index)
+        };
+        self.save_danmaku_servers(&servers, active, None);
+    }
+
+    fn save_danmaku_servers(
+        &self, servers: &[DanmakuServer], active: i32, credentials: Option<(&str, &str)>,
+    ) {
+        match Settings::save_danmaku_servers(servers, active, credentials) {
+            Ok(()) => self.reload_danmaku_servers(),
+            Err(error) => self.toast(format!(
+                "{}: {error}",
+                gettext("Failed to save Danmaku settings")
+            )),
+        }
     }
 
     pub fn set_sidebar(&self) {

@@ -349,6 +349,57 @@
         <property name="icon-name">audio-x-generic-symbolic</property>
         <child>
           <object class="AdwPreferencesGroup">
+            <property name="title" translatable="yes">Danmaku</property>
+            <property name="description" translatable="yes">App credentials apply to all servers. Leave both fields blank to use the defaults.</property>
+            <child>
+              <object class="AdwComboRow" id="danmaku_server_combo">
+                <property name="title" translatable="yes">Danmaku Server</property>
+                <signal name="notify::selected" handler="on_danmaku_server_selected" swapped="yes"/>
+              </object>
+            </child>
+            <child>
+              <object class="AdwEntryRow" id="danmaku_server_name">
+                <property name="title" translatable="yes">Server Name</property>
+                <property name="visible">false</property>
+              </object>
+            </child>
+            <child>
+              <object class="AdwEntryRow" id="danmaku_server_url">
+                <property name="title" translatable="yes">Server URL</property>
+                <property name="input-purpose">url</property>
+                <property name="visible">false</property>
+              </object>
+            </child>
+            <child>
+              <object class="AdwEntryRow" id="danmaku_app_id">
+                <property name="title" translatable="yes">App ID</property>
+              </object>
+            </child>
+            <child>
+              <object class="AdwPasswordEntryRow" id="danmaku_app_secret">
+                <property name="title" translatable="yes">App Secret</property>
+              </object>
+            </child>
+            <child>
+              <object class="AdwButtonRow">
+                <property name="title" translatable="yes">Apply Danmaku Settings</property>
+                <signal name="activated" handler="on_danmaku_save" swapped="yes"/>
+              </object>
+            </child>
+            <child>
+              <object class="AdwButtonRow" id="danmaku_server_remove">
+                <property name="title" translatable="yes">Remove Server</property>
+                <property name="visible">false</property>
+                <signal name="activated" handler="on_danmaku_remove" swapped="yes"/>
+                <style>
+                  <class name="destructive-action"/>
+                </style>
+              </object>
+            </child>
+          </object>
+        </child>
+        <child>
+          <object class="AdwPreferencesGroup">
             <property name="title" translatable="yes">Music Player</property>
             <child>
               <object class="AdwComboRow" id="repeatcontrol">

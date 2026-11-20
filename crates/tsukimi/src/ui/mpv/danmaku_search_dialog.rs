@@ -22,7 +22,10 @@ use crate::{
     ui::{
         mpv::{
             danmaku_cache_map::DanmakuCacheMap,
-            page::MPVPage,
+            page::{
+                DanmakuRequest,
+                MPVPage,
+            },
         },
         provider::tu_item::{
             DANMAKU_ANIME,
@@ -74,6 +77,7 @@ mod imp {
 
         pub client: OnceCell<DanmakuClient>,
         pub page: glib::WeakRef<MPVPage>,
+        pub(super) request: RefCell<Option<DanmakuRequest>>,
         pub episodes: RefCell<Vec<TuItem>>,
     }
 
@@ -119,12 +123,14 @@ glib::wrapper! {
 
 #[template_callbacks]
 impl DanmakuSearchDialog {
-    pub fn new(page: &MPVPage, client: DanmakuClient) -> Self {
+    pub fn new(page: &MPVPage, client: DanmakuClient) -> Option<Self> {
+        let request = page.danmaku_request()?;
         let dialog: Self = glib::Object::new();
         dialog.imp().client.get_or_init(|| client);
         dialog.imp().page.set(Some(page));
-        dialog.prefill_from_current_video();
-        dialog
+        dialog.prefill_from_current_video(&request.item);
+        dialog.imp().request.replace(Some(request));
+        Some(dialog)
     }
 
     fn client(&self) -> &DanmakuClient {
@@ -132,16 +138,21 @@ impl DanmakuSearchDialog {
         self.imp().client.get().unwrap()
     }
 
-    fn prefill_from_current_video(&self) {
-        let Some(item) = self
-            .imp()
-            .page
-            .upgrade()
-            .and_then(|page| page.current_video())
-        else {
-            return;
-        };
+    fn current_page(&self) -> Option<MPVPage> {
+        let imp = self.imp();
+        let page = imp.page.upgrade().filter(|page| {
+            imp.request
+                .borrow()
+                .as_ref()
+                .is_some_and(|request| page.is_current_danmaku_request(request))
+        });
+        if page.is_none() {
+            self.close();
+        }
+        page
+    }
 
+    fn prefill_from_current_video(&self, item: &TuItem) {
         self.imp()
             .title_entry
             .set_text(&item.series_name().unwrap_or_else(|| item.name()));
@@ -190,6 +201,9 @@ impl DanmakuSearchDialog {
     }
 
     async fn search(&self) {
+        if self.current_page().is_none() {
+            return;
+        }
         let title = self.imp().title_entry.text().trim().to_string();
         if title.chars().count() < 2 {
             self.show_toast(gettext("Enter at least two characters"));
@@ -201,6 +215,9 @@ impl DanmakuSearchDialog {
         let client = self.client().clone();
         let result =
             spawn_tokio(async move { client.search_anime_details(title, anime_type).await }).await;
+        if self.current_page().is_none() {
+            return;
+        }
         self.set_searching(false);
 
         match result {
@@ -246,20 +263,22 @@ impl DanmakuSearchDialog {
     }
 
     pub fn apply_episode(&self, item: TuItem) {
+        let Some(page) = self.current_page() else {
+            return;
+        };
         let Ok(episode_id) = item.id().parse::<i64>() else {
             self.show_toast(gettext("Invalid episode ID"));
             return;
         };
-        let Some(page) = self.imp().page.upgrade() else {
-            self.close();
-            return;
+        let imp = self.imp();
+        let request = {
+            let mut request = imp.request.borrow_mut();
+            let request = request.as_mut().unwrap();
+            request.generation = page.next_danmaku_generation();
+            request.clone()
         };
-
-        let Some(current_item) = page.current_video() else {
-            self.close();
-            return;
-        };
-        let available_episodes = self.imp().episodes.borrow().clone();
+        imp.episode_list.set_sensitive(false);
+        let available_episodes = imp.episodes.borrow().clone();
         let item_name = item.series_name().map_or_else(
             || item.name(),
             |series_name| format!("{} - {series_name}", item.name()),
@@ -269,16 +288,23 @@ impl DanmakuSearchDialog {
             #[weak(rename_to = obj)]
             self,
             async move {
-                match page
-                    .apply_manual_danmaku(client, episode_id, item_name)
-                    .await
-                {
+                let result = page
+                    .apply_manual_danmaku(&request, &client, episode_id, item_name)
+                    .await;
+                if !page.is_current_danmaku_request(&request) {
+                    obj.close();
+                    return;
+                }
+                obj.imp().episode_list.set_sensitive(true);
+                match result {
                     Ok(true) => {
                         let mut cache = DanmakuCacheMap::load();
                         if let Err(error) = cache.remember_manual_selection(
-                            &current_item,
+                            &request.item,
                             &item,
                             &available_episodes,
+                            &request.session,
+                            &client,
                         ) {
                             tracing::warn!("Failed to cache manual danmaku match: {error}");
                         }
@@ -294,7 +320,7 @@ impl DanmakuSearchDialog {
     }
 
     pub fn open_anime(&self, item: TuItem) {
-        if item.item_type() != DANMAKU_ANIME {
+        if item.item_type() != DANMAKU_ANIME || self.current_page().is_none() {
             return;
         }
 
@@ -324,6 +350,9 @@ impl DanmakuSearchDialog {
                         .await
                 })
                 .await;
+                if obj.current_page().is_none() {
+                    return;
+                }
 
                 match result {
                     Ok(animes) => {
