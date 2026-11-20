@@ -341,16 +341,33 @@ impl Settings {
     }
 
     pub fn edit_account(
-        &self, old_account: Account, new_account: Account,
+        &self, old_account: &Account, new_account: &Account,
     ) -> Result<(), glib::BoolError> {
         let mut accounts = self.accounts();
-        if accounts.contains(&new_account) {
-            return Ok(());
+        let index = accounts
+            .iter()
+            .position(|account| account == old_account)
+            .ok_or_else(|| glib::bool_error!("Account not found"))?;
+        if accounts
+            .iter()
+            .enumerate()
+            .any(|(i, account)| i != index && account.servername == new_account.servername)
+        {
+            return Err(glib::bool_error!("Server name already exists"));
         }
-        if let Some(index) = accounts.iter().position(|a| a == &old_account) {
-            accounts[index] = new_account;
+        accounts[index] = new_account.clone();
+        if old_account.servername != new_account.servername
+            && self.preferred_server() == old_account.servername
+        {
+            let settings = Self::default();
+            settings.delay();
+            settings.set_accounts(accounts)?;
+            settings.set_preferred_server(&new_account.servername)?;
+            settings.apply();
+            Ok(())
+        } else {
+            self.set_accounts(accounts)
         }
-        self.set_string(Self::ACCOUNTS, &accounts.to_string())
     }
 
     pub fn set_accounts(&self, accounts: Vec<Account>) -> Result<(), glib::BoolError> {

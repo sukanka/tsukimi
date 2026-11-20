@@ -262,6 +262,14 @@
                                             </child>
                                           </object>
                                         </child>
+                                        <child>
+                                          <object class="GtkMenuButton" id="route_switch_button">
+                                            <property name="visible">False</property>
+                                            <property name="halign">end</property>
+                                            <property name="label" translatable="yes">Route</property>
+                                            <property name="tooltip-text" translatable="yes">Switch Route</property>
+                                          </object>
+                                        </child>
                                       </object>
                                     </child>
                                   </object>

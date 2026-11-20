@@ -1,4 +1,7 @@
-use std::path::PathBuf;
+use std::{
+    path::PathBuf,
+    sync::Arc,
+};
 
 use adw::prelude::*;
 use gettextrs::gettext;
@@ -106,6 +109,10 @@ mod imp {
 
         #[template_child]
         pub avatar: TemplateChild<adw::Avatar>,
+        #[template_child]
+        pub route_switch_button: TemplateChild<gtk::MenuButton>,
+        pub route_menu: gtk::gio::Menu,
+        pub route_action: OnceCell<gtk::gio::SimpleAction>,
 
         pub progress_bar_animation: OnceCell<adw::TimedAnimation>,
         pub progress_bar_fade_animation: OnceCell<adw::TimedAnimation>,
@@ -177,6 +184,7 @@ mod imp {
                 .set_player(Some(&self.mpvnav.imp().video.get()));
 
             let obj = self.obj();
+            obj.setup_route_action();
 
             let player_content_inset_provider = gtk::CssProvider::new();
             gtk::style_context_add_provider_for_display(
@@ -268,6 +276,7 @@ use crate::{
     APP_ID,
     client::{
         Account,
+        error::UserFacingError,
         jellyfin_client::JELLYFIN_CLIENT,
     },
     ui::{
@@ -409,6 +418,7 @@ impl Window {
                 self.reset();
             }
         }
+        self.account_setup();
         if accounts.is_empty() {
             imp.login_stack.set_visible_child_name("no-server");
             return;
@@ -506,6 +516,7 @@ impl Window {
     }
 
     pub fn reset(&self) {
+        self.account_setup();
         self.mainpage();
         self.imp().selectlist.set_selected(0);
 
@@ -513,7 +524,6 @@ impl Window {
             #[weak(rename_to = obj)]
             self,
             async move {
-                obj.account_setup().await;
                 obj.remove_all();
                 obj.homepage();
 
@@ -547,11 +557,99 @@ impl Window {
         progressbar.set_fraction(to_value);
     }
 
-    pub async fn account_setup(&self) {
+    fn account_setup(&self) {
         let imp = self.imp();
-        let s = JELLYFIN_CLIENT.session();
-        imp.namerow.set_title(&s.account.username);
-        imp.namerow.set_subtitle(&s.account.servername);
+        let session = JELLYFIN_CLIENT.session();
+        let account = &session.account;
+        imp.namerow.set_title(&account.username);
+        imp.namerow.set_subtitle(&account.servername);
+
+        let has_routes = !account.routes.is_empty() && SETTINGS.accounts().contains(account);
+        imp.route_switch_button.set_visible(has_routes);
+        imp.route_menu.remove_all();
+        if has_routes {
+            let routes = std::iter::once((-1, account.main_route_name())).chain(
+                account
+                    .routes
+                    .iter()
+                    .enumerate()
+                    .map(|(index, route)| (index as i32, route.name.as_str())),
+            );
+            for (index, name) in routes {
+                let item = gio::MenuItem::new(Some(name), None);
+                item.set_action_and_target_value(
+                    Some("win.switch-route"),
+                    Some(&index.to_variant()),
+                );
+                imp.route_menu.append_item(&item);
+            }
+            let selected = account.active_route.map_or(-1, |index| index as i32);
+            imp.route_action
+                .get()
+                .unwrap()
+                .set_state(&selected.to_variant());
+        }
+    }
+
+    fn setup_route_action(&self) {
+        let imp = self.imp();
+        let action = gio::SimpleAction::new_stateful(
+            "switch-route",
+            Some(glib::VariantTy::INT32),
+            &(-1_i32).to_variant(),
+        );
+        action.connect_activate(glib::clone!(
+            #[weak(rename_to = window)]
+            self,
+            move |action, value| {
+                let index = value.and_then(|value| value.get::<i32>()).unwrap();
+                let action = action.clone();
+                action.set_enabled(false);
+                spawn(async move {
+                    if let Err(error) = window.switch_route(index).await {
+                        window.toast(format!(
+                            "{}: {}",
+                            gettext("Failed to switch route"),
+                            error.to_user_facing()
+                        ));
+                    }
+                    action.set_enabled(true);
+                });
+            }
+        ));
+        self.add_action(&action);
+        imp.route_action.set(action).unwrap();
+        imp.route_switch_button
+            .set_menu_model(Some(&imp.route_menu));
+    }
+
+    pub fn bind_route_switcher(&self, button: &gtk::MenuButton) {
+        let imp = self.imp();
+        button.set_menu_model(Some(&imp.route_menu));
+        imp.route_switch_button
+            .bind_property("visible", button, "visible")
+            .sync_create()
+            .build();
+    }
+
+    async fn switch_route(&self, index: i32) -> anyhow::Result<()> {
+        let current = JELLYFIN_CLIENT.session.load_full();
+        let selected = usize::try_from(index).ok();
+        if current.account.active_route == selected
+            || selected.is_some_and(|index| index >= current.account.routes.len())
+        {
+            return Ok(());
+        }
+        let mut account = current.account.clone();
+        account.active_route = selected;
+        let (candidate, user) =
+            spawn_tokio(async move { JELLYFIN_CLIENT.validate_account(account).await }).await?;
+        if Arc::ptr_eq(&current, &JELLYFIN_CLIENT.session()) {
+            SETTINGS.edit_account(&current.account, &candidate.account)?;
+            JELLYFIN_CLIENT.install_session(Arc::new(candidate), user.policy.is_administrator);
+            self.set_servers().await;
+        }
+        Ok(())
     }
 
     pub fn account_settings(&self) {

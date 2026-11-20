@@ -8,10 +8,7 @@ use std::{
 };
 
 use crate::{
-    client::account::{
-        ServerType,
-        build_url,
-    },
+    client::account::ServerType,
     ui::provider::tu_item::image_type::BACKDROP,
 };
 use anyhow::{
@@ -131,6 +128,19 @@ pub struct Session {
 }
 
 impl Session {
+    fn new(account: Account, url: Url) -> Result<Self> {
+        let headers = build_headers(
+            Some(&account.user_id),
+            Some(&account.access_token),
+            account.server_type.unwrap_or_default(),
+        )?;
+        Ok(Self {
+            server_name_hash: generate_hash(&account.servername),
+            account,
+            url_headers: Some((url, headers)),
+        })
+    }
+
     fn empty() -> Self {
         Self {
             account: Account::default(),
@@ -232,32 +242,54 @@ impl JellyfinClient {
     }
 
     pub async fn init(&self, account: &Account) -> Result<(), Box<dyn std::error::Error>> {
-        let server_type = account.server_type.unwrap_or_default();
-        let headers = build_headers(
-            Some(&account.user_id),
-            Some(&account.access_token),
-            server_type,
-        )?;
-        let url = build_base_url(account.url()?, server_type)?;
-        self.session.store(Arc::new(Session {
-            account: account.clone(),
-            url_headers: Some((url, headers)),
-            server_name_hash: generate_hash(&account.servername),
-        }));
-        self.next_up_date_cache.invalidate_all();
-
-        crate::ui::provider::set_admin(false);
+        let url = build_base_url(account.url()?, account.server_type.unwrap_or_default())?;
+        let session = Arc::new(Session::new(account.clone(), url)?);
+        self.install_session(session.clone(), false);
         spawn_tokio_without_await(async move {
-            match JELLYFIN_CLIENT.get_current_user().await {
-                Ok(r) => {
-                    if r.policy.is_administrator {
-                        crate::ui::provider::set_admin(true);
+            match JELLYFIN_CLIENT.get_user_for(&session).await {
+                Ok(user) => gtk::glib::MainContext::default().invoke(move || {
+                    if Arc::ptr_eq(&session, &JELLYFIN_CLIENT.session()) {
+                        crate::ui::provider::set_admin(user.policy.is_administrator);
                     }
-                }
+                }),
                 Err(e) => warn!("Failed to authenticate as admin: {}", e),
             }
         });
         Ok(())
+    }
+
+    pub fn install_session(&self, session: Arc<Session>, is_admin: bool) {
+        self.session.store(session);
+        self.next_up_date_cache.invalidate_all();
+        crate::ui::provider::set_admin(is_admin);
+    }
+
+    pub async fn validate_account(&self, mut account: Account) -> Result<(Session, User)> {
+        let server_type = account.server_type.unwrap_or_default();
+        let url = build_base_url(account.url()?, server_type)?;
+        let login_user = if account.access_token.is_empty() {
+            let login = self
+                .login(&url, server_type, &account.username, &account.password)
+                .await?;
+            account.user_id.clone_from(&login.user.id);
+            account.access_token = login.access_token;
+            Some(login.user)
+        } else {
+            None
+        };
+        if account.servername.is_empty() {
+            account.servername = self
+                .get_server_info_public(&url, server_type)
+                .await?
+                .server_name;
+        }
+
+        let session = Session::new(account, url)?;
+        let user = match login_user {
+            Some(user) => user,
+            None => self.get_user_for(&session).await?,
+        };
+        Ok((session, user))
     }
 
     pub async fn request<T>(&self, path: &str, params: &[(&str, &str)]) -> Result<T>
@@ -265,8 +297,13 @@ impl JellyfinClient {
         T: for<'de> Deserialize<'de> + Send + 'static,
     {
         let request = self.prepare_request(Method::GET, path, params)?;
-        let res = self.send_request(request).await?;
+        self.request_json(request, path).await
+    }
 
+    async fn request_json<T: DeserializeOwned>(
+        &self, request: RequestBuilder, path: &str,
+    ) -> Result<T> {
+        let res = self.send_request(request).await?;
         let res = match res.error_for_status() {
             Ok(r) => r,
             Err(e) => {
@@ -335,8 +372,16 @@ impl JellyfinClient {
     fn prepare_request(
         &self, method: Method, path: &str, params: &[(&str, &str)],
     ) -> Result<RequestBuilder> {
-        let s = self.session();
-        let (url, headers) = s.url_headers.as_ref().context("Client not initialized")?;
+        self.prepare_request_for(&self.session(), method, path, params)
+    }
+
+    fn prepare_request_for(
+        &self, session: &Session, method: Method, path: &str, params: &[(&str, &str)],
+    ) -> Result<RequestBuilder> {
+        let (url, headers) = session
+            .url_headers
+            .as_ref()
+            .context("Client not initialized")?;
         Ok(self
             .client
             .request(method, url.join(path)?)
@@ -345,12 +390,11 @@ impl JellyfinClient {
     }
 
     fn prepare_unauthenticated_request(
-        &self, method: Method, server: &str, port: &str, server_type: ServerType, path: &str,
+        &self, method: Method, url: &Url, server_type: ServerType, path: &str,
     ) -> Result<RequestBuilder> {
-        let url = build_base_url(build_url(server, port)?, server_type)?.join(path)?;
         Ok(self
             .client
-            .request(method, url)
+            .request(method, url.join(path)?)
             .headers(build_headers(None, None, server_type)?))
     }
 
@@ -380,14 +424,17 @@ impl JellyfinClient {
     }
 
     pub async fn get_current_user(&self) -> Result<User> {
-        let s = self.session();
-        let path = format!("Users/{}", s.account.user_id);
-        let res = self.request(&path, &[]).await?;
-        Ok(res)
+        self.get_user_for(&self.session.load_full()).await
     }
 
-    pub async fn login(
-        &self, server: &str, port: &str, server_type: ServerType, username: &str, password: &str,
+    async fn get_user_for(&self, session: &Session) -> Result<User> {
+        let path = format!("Users/{}", session.account.user_id);
+        let request = self.prepare_request_for(session, Method::GET, &path, &[])?;
+        self.request_json(request, &path).await
+    }
+
+    async fn login(
+        &self, url: &Url, server_type: ServerType, username: &str, password: &str,
     ) -> Result<LoginResponse> {
         let body = json!({
             "Username": username,
@@ -396,8 +443,7 @@ impl JellyfinClient {
         let request = self
             .prepare_unauthenticated_request(
                 Method::POST,
-                server,
-                port,
+                url,
                 server_type,
                 "Users/AuthenticateByName",
             )?
@@ -907,7 +953,16 @@ impl JellyfinClient {
     pub fn resolve_url(&self, path: &str) -> String {
         let s = self.session();
         let (url, _) = s.url_headers.as_ref().expect("Client not initialized");
-        url.join(path.trim_start_matches('/')).unwrap().to_string()
+        let path = if let Some(relative) = path.strip_prefix(url.path()) {
+            relative
+        } else if s.account.server_type.unwrap_or_default() == ServerType::Emby
+            && let Some(relative) = path.strip_prefix("/emby/")
+        {
+            relative
+        } else {
+            path.trim_start_matches('/')
+        };
+        url.join(path).unwrap().to_string()
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -1442,13 +1497,12 @@ impl JellyfinClient {
         self.request("System/Info", &[]).await
     }
 
-    pub async fn get_server_info_public(
-        &self, server: &str, port: &str, server_type: ServerType,
+    async fn get_server_info_public(
+        &self, url: &Url, server_type: ServerType,
     ) -> Result<PublicServerInfo> {
         let request = self.prepare_unauthenticated_request(
             Method::GET,
-            server,
-            port,
+            url,
             server_type,
             "System/Info/Public",
         )?;
@@ -1588,8 +1642,7 @@ mod tests {
     async fn search() {
         let result = JELLYFIN_CLIENT
             .login(
-                "https://example.com",
-                "443",
+                &Url::parse("https://example.com").unwrap(),
                 ServerType::Jellyfin,
                 "test",
                 "test",
@@ -1607,6 +1660,7 @@ mod tests {
                     user_id: response.user.id,
                     access_token: response.access_token,
                     server_type: Some(ServerType::Jellyfin),
+                    ..Default::default()
                 };
                 let _ = JELLYFIN_CLIENT.init(&account).await;
             }
@@ -1644,8 +1698,7 @@ mod tests {
     async fn test_upload_image() {
         let result = JELLYFIN_CLIENT
             .login(
-                "http://127.0.0.1",
-                "8096",
+                &Url::parse("http://127.0.0.1:8096").unwrap(),
                 ServerType::Jellyfin,
                 "inaha",
                 "",
@@ -1663,6 +1716,7 @@ mod tests {
                     user_id: response.user.id,
                     access_token: response.access_token,
                     server_type: Some(ServerType::Jellyfin),
+                    ..Default::default()
                 };
                 let _ = JELLYFIN_CLIENT.init(&account).await;
             }

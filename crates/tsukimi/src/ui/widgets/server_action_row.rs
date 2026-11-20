@@ -9,7 +9,7 @@ use gtk::{
 };
 
 use super::{
-    account_add::imp::ActionType,
+    account_add::AccountWindow,
     window::Window,
 };
 use crate::{
@@ -71,12 +71,10 @@ mod imp {
         fn constructed(&self) {
             self.parent_constructed();
             let obj = self.obj();
-            obj.set_title(&obj.item().servername());
-            obj.set_subtitle(&obj.item().username());
-            if matches!(
-                ServerType::from_index(obj.item().server_type()),
-                ServerType::Jellyfin
-            ) {
+            let account = obj.item().account();
+            obj.set_title(&account.servername);
+            obj.set_subtitle(&account.username);
+            if account.server_type == Some(ServerType::Jellyfin) {
                 self.server_image.set_icon_name(Some("jellyfin-symbolic"));
             }
         }
@@ -114,43 +112,13 @@ glib::wrapper! {
 impl ServerActionRow {
     pub fn new(account: Account) -> Self {
         glib::Object::builder()
-            .property("item", AccountItem::from_simple(&account))
+            .property("item", AccountItem::from_simple(account))
             .build()
     }
 
     #[template_callback]
     fn on_edit_clicked(&self) {
-        let account = self.item().account();
-        let account_window = crate::ui::widgets::account_add::AccountWindow::new();
-        account_window
-            .imp()
-            .nav
-            .set_title(&gettextrs::gettext("Edit Server"));
-        account_window.set_action_type(ActionType::Edit);
-        account_window
-            .imp()
-            .old_account
-            .replace(Some(account.to_owned()));
-        account_window
-            .imp()
-            .username_entry
-            .set_text(&account.username);
-        account_window
-            .imp()
-            .password_entry
-            .set_text(&account.password);
-        account_window
-            .imp()
-            .servername_entry
-            .set_text(&account.servername);
-        if let Ok(url) = account.url() {
-            account_window.imp().server_entry.set_text(url.as_str());
-        }
-        account_window
-            .imp()
-            .server_type
-            .set_selected(account.server_type.unwrap_or_default().index());
-        account_window.present(self.root().as_ref());
+        AccountWindow::for_edit(self.item().account()).present(self.root().as_ref());
     }
 
     #[template_callback]

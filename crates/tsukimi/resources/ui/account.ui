@@ -88,6 +88,16 @@
                                               </object>
                                             </child>
                                             <child>
+                                              <object class="AdwEntryRow" id="path_entry">
+                                                <property name="title" translatable="yes">URL Path Prefix (optional)</property>
+                                              </object>
+                                            </child>
+                                            <child>
+                                              <object class="AdwEntryRow" id="route_name_entry">
+                                                <property name="title" translatable="yes">Route Name (optional)</property>
+                                              </object>
+                                            </child>
+                                            <child>
                                               <object class="AdwEntryRow" id="username_entry">
                                                 <property name="title" translatable="yes">Username</property>
                                               </object>
@@ -102,9 +112,21 @@
                                           </object>
                                         </child>
                                         <child>
+                                          <object class="AdwPreferencesGroup" id="routes_group">
+                                            <property name="title" translatable="yes">Additional Routes</property>
+                                            <property name="header-suffix">
+                                              <object class="GtkButton">
+                                                <property name="label" translatable="yes">Add Route</property>
+                                                <property name="valign">center</property>
+                                                <signal name="clicked" handler="on_add_route_clicked" swapped="yes"/>
+                                              </object>
+                                            </property>
+                                          </object>
+                                        </child>
+                                        <child>
                                           <object class="AdwPreferencesGroup">
                                             <child>
-                                              <object class="AdwButtonRow">
+                                              <object class="AdwButtonRow" id="save_row">
                                                 <property name="title" translatable="yes">Add</property>
                                                 <property name="start-icon-name">list-add-symbolic</property>
                                                 <property name="action-name">account.add</property>

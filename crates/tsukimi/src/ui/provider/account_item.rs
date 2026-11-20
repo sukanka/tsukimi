@@ -1,48 +1,18 @@
-use std::cell::{
-    Cell,
-    RefCell,
+use std::cell::RefCell;
+
+use gtk::glib::{
+    self,
+    subclass::prelude::*,
 };
 
-use gtk::{
-    glib,
-    glib::{
-        prelude::*,
-        subclass::prelude::*,
-    },
-};
+use crate::client::Account;
 
-use crate::client::{
-    Account,
-    account::ServerType,
-};
-
-pub mod imp {
-    use gtk::glib::Properties;
-
+mod imp {
     use super::*;
 
-    #[derive(Properties, Default)]
-    #[properties(wrapper_type = super::AccountItem)]
-    pub struct AccountItem {
-        #[property(get, set)]
-        server: RefCell<String>,
-        #[property(get, set)]
-        servername: RefCell<String>,
-        #[property(get, set)]
-        username: RefCell<String>,
-        #[property(get, set)]
-        password: RefCell<String>,
-        #[property(get, set)]
-        port: RefCell<String>,
-        #[property(get, set)]
-        user_id: RefCell<String>,
-        #[property(get, set)]
-        access_token: RefCell<String>,
-        #[property(get, set)]
-        server_type: Cell<u32>,
-    }
+    #[derive(Default)]
+    pub struct AccountItem(pub RefCell<Account>);
 
-    #[glib::derived_properties]
     impl ObjectImpl for AccountItem {}
 
     #[glib::object_subclass]
@@ -57,30 +27,13 @@ glib::wrapper! {
 }
 
 impl AccountItem {
-    pub fn from_simple(account: &Account) -> Self {
-        let account = account.to_owned();
-        let item: AccountItem = glib::object::Object::new();
-        item.set_server(account.server);
-        item.set_servername(account.servername);
-        item.set_username(account.username);
-        item.set_password(account.password);
-        item.set_port(account.port);
-        item.set_user_id(account.user_id);
-        item.set_access_token(account.access_token);
-        item.set_server_type(account.server_type.unwrap_or_default().index());
+    pub fn from_simple(account: Account) -> Self {
+        let item: Self = glib::Object::new();
+        item.imp().0.replace(account);
         item
     }
 
     pub fn account(&self) -> Account {
-        Account {
-            server: self.server(),
-            servername: self.servername(),
-            username: self.username(),
-            password: self.password(),
-            port: self.port(),
-            user_id: self.user_id(),
-            access_token: self.access_token(),
-            server_type: Some(ServerType::from_index(self.server_type())),
-        }
+        self.imp().0.borrow().clone()
     }
 }

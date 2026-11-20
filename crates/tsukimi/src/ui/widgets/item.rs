@@ -216,6 +216,8 @@ pub(crate) mod imp {
 
         #[template_child]
         pub episode_switcher: TemplateChild<EpisodeSwitcher>,
+        #[template_child]
+        pub route_switch_button: TemplateChild<gtk::MenuButton>,
 
         pub show_left_animation: OnceCell<adw::TimedAnimation>,
         pub hide_left_animation: OnceCell<adw::TimedAnimation>,
@@ -328,6 +330,9 @@ impl ItemPage {
         let type_ = item.item_type();
         let backdrop_source = select_backdrop_picture_source(&item);
         let imp = self.imp();
+        if let Some(window) = self.root().and_downcast::<Window>() {
+            window.bind_route_switcher(&imp.route_switch_button);
+        }
 
         if let Some(series_name) = item.series_name() {
             imp.line1.set_text(&series_name);
