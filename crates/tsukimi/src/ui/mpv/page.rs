@@ -69,6 +69,34 @@ const MIN_MOTION_TIME: i64 = 100000;
 const PREV_CHAPTER_KEY: gtk::gdk::Key = gtk::gdk::Key::Page_Down;
 const NEXT_CHAPTER_KEY: gtk::gdk::Key = gtk::gdk::Key::Page_Up;
 
+#[derive(PartialEq, Eq)]
+struct PlaybackCacheKey {
+    account_name: String,
+    user_id: String,
+    endpoint: Option<Url>,
+    item_id: String,
+    media_source_id: Option<String>,
+    video_index: Option<i64>,
+    subtitle_index: Option<i64>,
+    subtitle_language: String,
+    video_matcher: Option<String>,
+}
+
+impl PlaybackCacheKey {
+    fn matches_session(&self) -> bool {
+        let session = JELLYFIN_CLIENT.session();
+        self.account_name == session.account.servername
+            && self.user_id == session.account.user_id
+            && self.endpoint.as_ref() == session.url_headers.as_ref().map(|(url, _)| url)
+    }
+}
+
+#[derive(Clone, Copy)]
+enum MpvLoad {
+    Issued(u64),
+    Started(u64),
+}
+
 #[derive(Clone, Copy)]
 enum MpvTrackKind {
     Audio,
@@ -247,7 +275,12 @@ mod imp {
         pub last_nonzero_volume: Cell<f64>,
         pub danmaku_count: Cell<usize>,
         pub danmaku_generation: Cell<u64>,
+        // A parked file is still loaded, but its generation is no longer current.
         pub file_loaded: Cell<bool>,
+        pub(super) playback_key: RefCell<Option<PlaybackCacheKey>>,
+        pub(super) play_generation: Cell<u64>,
+        pub(super) mpv_load: Cell<Option<MpvLoad>>,
+        pub(super) pending_url: RefCell<Option<String>>,
 
         pub click_state: Cell<ClickState>,
     }
@@ -400,7 +433,7 @@ mod imp {
             }
             self.paused.set(paused);
 
-            if self.file_loaded.get()
+            if self.obj().playback_ready()
                 && !self.loading_box.is_visible()
                 && self.danmaku_popover_content.enabled()
             {
@@ -451,12 +484,17 @@ impl MPVPage {
     }
 
     fn auto_search_danmaku(&self, client: DanmakuClient, item: &TuItem) {
+        let generation = self.next_danmaku_generation();
+        let item_id = item.id();
         if let Some(cached) = DanmakuCacheMap::load().cached_danmaku(item) {
+            self.clear_danmaku(DanmakuPopoverStatus::Loading);
             spawn_g_timeout(glib::clone!(
                 #[weak(rename_to = obj)]
                 self,
                 async move {
-                    if !obj.imp().danmaku_popover_content.enabled() {
+                    if !obj.is_current_danmaku_request(generation, &item_id)
+                        || !obj.imp().danmaku_popover_content.enabled()
+                    {
                         return;
                     }
                     if let Err(error) = obj
@@ -470,8 +508,6 @@ impl MPVPage {
             return;
         }
 
-        let generation = self.next_danmaku_generation();
-        let item_id = item.id();
         let is_episode = item.season_name().is_some() || item.series_name().is_some();
         let anime = Self::danmaku_search_title(item);
         let episode = is_episode
@@ -619,7 +655,7 @@ impl MPVPage {
 
     fn update_danmaku_rendering(&self, enabled: bool) {
         let imp = self.imp();
-        let ready = enabled && self.has_danmaku() && imp.file_loaded.get();
+        let ready = enabled && self.has_danmaku() && self.playback_ready();
         imp.danmakw.set_visible(ready);
         if !ready {
             imp.danmaku_sync.reset();
@@ -660,19 +696,62 @@ impl MPVPage {
         self.imp().danmakw.get()
     }
 
-    fn mark_stream_failed(&self) {
+    fn next_play_generation(&self) -> u64 {
+        let generation = self.imp().play_generation.get().wrapping_add(1);
+        self.imp().play_generation.set(generation);
+        generation
+    }
+
+    fn request_is_current(&self, generation: u64) -> bool {
         let imp = self.imp();
-        imp.file_loaded.set(false);
-        imp.media_source_fallback.take();
-        imp.danmaku_sync.reset();
-        imp.danmakw.stop_rendering();
-        imp.danmakw.set_visible(false);
-        imp.loading_box.set_visible(false);
-        imp.spinner.set_visible(false);
+        imp.play_generation.get() == generation
+            && imp
+                .playback_key
+                .borrow()
+                .as_ref()
+                .is_some_and(PlaybackCacheKey::matches_session)
+    }
+
+    fn has_current_mpv_load(&self) -> bool {
+        matches!(self.imp().mpv_load.get(), Some(MpvLoad::Started(generation))
+            if self.request_is_current(generation))
+    }
+
+    fn playback_ready(&self) -> bool {
+        self.imp().file_loaded.get() && self.has_current_mpv_load()
+    }
+
+    fn load_mpv_file(&self, url: String) {
+        let imp = self.imp();
+        if imp.mpv_load.get().is_some() {
+            imp.pending_url.replace(Some(url));
+        } else {
+            imp.mpv_load
+                .set(Some(MpvLoad::Issued(imp.play_generation.get())));
+            imp.video.play(&url, imp.last_playback_position.get());
+        }
+    }
+
+    fn cancel_mpv_load(&self) {
+        let imp = self.imp();
+        imp.pending_url.take();
+        if matches!(imp.mpv_load.get(), Some(MpvLoad::Started(_))) {
+            imp.video.stop();
+        }
     }
 
     fn fail_playback(&self, message: impl Into<String>) {
-        self.mark_stream_failed();
+        let imp = self.imp();
+        imp.file_loaded.set(false);
+        imp.back.take();
+        imp.media_source_fallback.take();
+        self.remove_timeout();
+        self.next_danmaku_generation();
+        self.clear_danmaku(DanmakuPopoverStatus::Idle);
+        self.update_danmaku_rendering(false);
+        self.update_seeking(false, 0.0);
+        imp.video.update_paused(true);
+        self.set_paused(true);
         self.toast(message);
         self.notify_stopped();
     }
@@ -682,12 +761,10 @@ impl MPVPage {
         video_matcher: Option<String>, start_seconds: f64,
     ) {
         let imp = self.imp();
-        imp.video.player().push_an_empty_texture();
-        imp.file_loaded.set(false);
-        imp.media_source_fallback.take();
-        imp.danmaku_sync.reset();
-        imp.danmakw.stop_rendering();
-        imp.danmakw.set_visible(false);
+        self.remove_timeout();
+        self.next_danmaku_generation();
+        self.update_danmaku_rendering(false);
+        imp.seeking.set(false);
         let (title1, title2) = if let Some(series_name) = item.series_name() {
             let episode_info = format!(
                 "S{}E{}: {}",
@@ -716,16 +793,33 @@ impl MPVPage {
 
         let id = item.id();
         let series_id = item.series_id();
-        self.imp().video_scale.reset_scale();
-        self.imp().last_playback_position.set(start_seconds);
+        imp.last_playback_position.set(start_seconds);
         self.reset_skippable_segments();
 
-        // If the video_matcher is None, field wont be updated
         if let Some(video_matcher) = video_matcher {
-            self.imp()
-                .video_version_matcher
-                .replace(Some(video_matcher));
+            imp.video_version_matcher.replace(Some(video_matcher));
         }
+        let slang = selected
+            .as_ref()
+            .map(|s| s.sub_lang.clone())
+            .unwrap_or_else(|| SETTINGS.mpv_subtitle_preferred_lang_str());
+        let session = JELLYFIN_CLIENT.session();
+        let key = PlaybackCacheKey {
+            account_name: session.account.servername.clone(),
+            user_id: session.account.user_id.clone(),
+            endpoint: session.url_headers.as_ref().map(|(url, _)| url.clone()),
+            item_id: id.clone(),
+            media_source_id: selected.as_ref().map(|s| s.media_source_id.clone()),
+            video_index: selected.as_ref().map(|s| s.video_index),
+            subtitle_index: selected.as_ref().map(|s| s.sub_index),
+            subtitle_language: slang.clone(),
+            video_matcher: imp.video_version_matcher.borrow().clone(),
+        };
+        let resume_cached =
+            imp.file_loaded.get() && imp.playback_key.borrow().as_ref() == Some(&key);
+        let generation = self.next_play_generation();
+        imp.playback_key.replace(Some(key));
+        imp.file_loaded.set(resume_cached);
 
         let track_list_changed = self.mpris_track_list_changed(&episode_list);
 
@@ -739,38 +833,61 @@ impl MPVPage {
             }
         }
         self.notify_track_changed();
-        if let Some(client) = DanmakuClient::instance() {
-            if SETTINGS.mpv_danmaku_enabled() {
-                self.auto_search_danmaku(client, &item);
+        if !resume_cached || !self.has_danmaku() {
+            if let Some(client) = DanmakuClient::instance() {
+                if SETTINGS.mpv_danmaku_enabled() {
+                    self.auto_search_danmaku(client, &item);
+                } else {
+                    self.clear_danmaku(DanmakuPopoverStatus::Idle);
+                }
             } else {
-                self.next_danmaku_generation();
-                self.clear_danmaku(DanmakuPopoverStatus::Idle);
+                self.clear_danmaku(DanmakuPopoverStatus::SecretNotExist);
             }
-        } else {
-            self.clear_danmaku(DanmakuPopoverStatus::SecretNotExist);
         }
-        self.load_skippable_segments(id.to_owned());
+        self.load_skippable_segments(id.clone(), generation);
+
+        if resume_cached {
+            imp.mpv_load.set(Some(MpvLoad::Started(generation)));
+            imp.loading_box.set_visible(false);
+            imp.spinner.set_visible(false);
+            imp.video_scale.set_value(start_seconds);
+            imp.video.resume_cached(start_seconds);
+            self.playback_started();
+            return;
+        }
+
+        imp.back.take();
+        imp.suburl.take();
+        imp.media_source_fallback.take();
+        self.cancel_mpv_load();
+        imp.video.player().push_an_empty_texture();
+        imp.video_scale.reset_scale();
+        imp.spinner.set_visible(true);
+        imp.loading_box.set_visible(true);
+        imp.network_speed_label
+            .set_text(&gettext("Initializing..."));
 
         spawn_g_timeout(glib::clone!(
             #[weak(rename_to = obj)]
             self,
             async move {
+                if !obj.request_is_current(generation) {
+                    return;
+                }
                 let imp = obj.imp();
-                imp.spinner.set_visible(true);
-                imp.loading_box.set_visible(true);
-                imp.network_speed_label
-                    .set_text(&gettext("Initializing..."));
-
                 let sub_stream_index = selected.as_ref().map(|s| s.sub_index);
                 let media_source_id = selected.as_ref().map(|s| s.media_source_id.clone());
                 let id_clone = id.to_owned();
-                let playback_info = match spawn_tokio(async move {
+                let playback_info = spawn_tokio(async move {
                     JELLYFIN_CLIENT
                         .get_playbackinfo(&id_clone, sub_stream_index, media_source_id, true)
                         .await
                 })
-                .await
-                {
+                .await;
+                if !obj.request_is_current(generation) {
+                    return;
+                }
+                let playback_info = match playback_info {
                     Ok(playback_info) => playback_info,
                     Err(e) => {
                         obj.fail_playback(e.to_user_facing());
@@ -812,8 +929,6 @@ impl MPVPage {
                     start_tick: glib::real_time() as u64 * 10,
                 };
 
-                imp.back.replace(Some(back));
-
                 let media_stream =
                     if let Some(sub_stream_index) = selected.as_ref().map(|s| s.sub_index) {
                         media_source.media_streams.get(sub_stream_index as usize)
@@ -834,16 +949,9 @@ impl MPVPage {
                             .and_then(|index| media_source.media_streams.get(index.0 as usize))
                     };
 
-                if let Some(slang) = selected.map(|s| s.sub_lang) {
-                    imp.video.set_slang(slang);
-                } else {
-                    imp.video
-                        .set_slang(SETTINGS.mpv_subtitle_preferred_lang_str());
-                }
-
                 let sub_url = match media_stream {
                     Some(stream) if stream.is_external => match &stream.delivery_url {
-                        Some(url) => Some(JELLYFIN_CLIENT.resolve_url(url)),
+                        Some(url) => Some(url.clone()),
                         None => {
                             println!("External Subtitle without selected source");
                             imp.obj()
@@ -858,7 +966,9 @@ impl MPVPage {
                     _ => None,
                 };
 
-                imp.suburl.replace(sub_url);
+                if !obj.request_is_current(generation) {
+                    return;
+                }
 
                 let Some((primary_url, fallback)) =
                     media_source_url(media_source, playback_info.play_session_id.as_deref())
@@ -867,8 +977,12 @@ impl MPVPage {
                     return;
                 };
 
+                imp.back.replace(Some(back));
+                imp.video.set_slang(slang);
+                imp.suburl
+                    .replace(sub_url.map(|url| JELLYFIN_CLIENT.resolve_url(&url)));
                 imp.media_source_fallback.replace(fallback);
-                imp.video.play(&primary_url, start_seconds);
+                obj.load_mpv_file(primary_url);
             }
         ));
     }
@@ -880,16 +994,17 @@ impl MPVPage {
         imp.skip_segment_revealer.set_reveal_child(false);
     }
 
-    fn load_skippable_segments(&self, id: String) {
+    fn load_skippable_segments(&self, id: String, generation: u64) {
         spawn_g_timeout(glib::clone!(
             #[weak(rename_to = obj)]
             self,
             async move {
-                let request_id = id.to_owned();
-                let Ok(segments) = spawn_tokio(async move {
-                    JELLYFIN_CLIENT.get_skippable_segments(&request_id).await
-                })
-                .await
+                if !obj.request_is_current(generation) {
+                    return;
+                }
+                let Ok(segments) =
+                    spawn_tokio(async move { JELLYFIN_CLIENT.get_skippable_segments(&id).await })
+                        .await
                 else {
                     return;
                 };
@@ -905,16 +1020,14 @@ impl MPVPage {
                     })
                     .sorted_by_key(|s| s.start_ticks)
                     .collect::<Vec<_>>();
-                if obj
-                    .current_video()
-                    .as_ref()
-                    .is_none_or(|item| item.id() != id)
-                {
+                if !obj.request_is_current(generation) {
                     return;
                 }
                 let imp = obj.imp();
                 imp.skippable_segments.replace(Some(segments));
-                obj.update_skip_segment_button(imp.video.position());
+                if obj.playback_ready() {
+                    obj.update_skip_segment_button(imp.video.position());
+                }
             }
         ));
     }
@@ -984,38 +1097,45 @@ impl MPVPage {
             .iter()
             .find(|source| source.id == media_source_id_clone);
 
-        let url = media_source?
+        media_source?
             .media_streams
             .get(stream_index as usize)?
             .delivery_url
-            .to_owned()?;
-
-        Some(JELLYFIN_CLIENT.resolve_url(&url))
+            .clone()
     }
 
     async fn set_audio_and_video_tracks_dropdown(&self, value: MpvTracks) {
         let imp = self.imp();
+        let generation = imp.play_generation.get();
         self.bind_tracks(
             value.audio_tracks,
             &imp.audio_listbox.get(),
             MpvTrackKind::Audio,
+            generation,
         )
         .await;
-        self.bind_tracks(
-            value.sub_tracks,
-            &imp.sub_listbox.get(),
-            MpvTrackKind::Subtitle,
-        )
-        .await;
+        if self.request_is_current(generation) {
+            self.bind_tracks(
+                value.sub_tracks,
+                &imp.sub_listbox.get(),
+                MpvTrackKind::Subtitle,
+                generation,
+            )
+            .await;
+        }
     }
 
     // TODO: Use GAction instead of listening to each button
-    async fn bind_tracks(&self, tracks: Vec<MpvTrack>, listbox: &gtk::ListBox, kind: MpvTrackKind) {
+    async fn bind_tracks(
+        &self, tracks: Vec<MpvTrack>, listbox: &gtk::ListBox, kind: MpvTrackKind, generation: u64,
+    ) {
+        let track_id = self.imp().video.get_track_id(kind.track_kind()).await;
+        if !self.request_is_current(generation) {
+            return;
+        }
         while let Some(row) = listbox.first_child() {
             listbox.remove(&row);
         }
-
-        let track_id = self.imp().video.get_track_id(kind.track_kind()).await;
 
         let row = CheckRow::new();
         row.set_title("None");
@@ -1066,10 +1186,6 @@ impl MPVPage {
     }
 
     async fn load_video(&self, offset: isize) {
-        if self.paused() {
-            self.imp().video.pause();
-        }
-
         let Some(current_video) = self.imp().current_video.borrow().to_owned() else {
             return;
         };
@@ -1132,6 +1248,13 @@ impl MPVPage {
             async move {
                 while let Ok(value) = MPV_EVENT_CHANNEL.rx.recv_async().await {
                     match value {
+                        ListenEvent::StartFile => obj.on_start_file(),
+                        ListenEvent::Eof(value) => obj.on_end_file(value),
+                        ListenEvent::Error(value) => obj.on_error(&value),
+                        ListenEvent::Volume(value) => obj.volume_cb(value),
+                        ListenEvent::Speed(value) => obj.speed_cb(value),
+                        ListenEvent::Shutdown => obj.on_shutdown(),
+                        _ if !obj.has_current_mpv_load() => {}
                         ListenEvent::Duration(value) => {
                             obj.update_duration(value);
                         }
@@ -1144,19 +1267,13 @@ impl MPVPage {
                         | ListenEvent::PlaybackRestart(time_millis) => {
                             let was_seeking = obj.get_seeking();
                             obj.update_seeking(false, time_millis);
-                            if was_seeking {
+                            if was_seeking && obj.imp().file_loaded.get() {
                                 obj.handle_callback(BackType::Back);
                                 obj.notify_seeked((time_millis / 1000.0) as i64);
                             }
                         }
-                        ListenEvent::Eof(value) => {
-                            obj.on_end_file(value);
-                        }
                         ListenEvent::PlaybackEnded => {
-                            obj.on_end_file(0);
-                        }
-                        ListenEvent::Error(value) => {
-                            obj.on_error(&value);
+                            obj.on_playback_ended(obj.imp().play_generation.get());
                         }
                         ListenEvent::Pause(value) => {
                             obj.imp().video.update_paused(value);
@@ -1168,18 +1285,8 @@ impl MPVPage {
                         ListenEvent::FileLoaded => {
                             obj.on_file_loaded();
                         }
-                        ListenEvent::StartFile => {}
                         ListenEvent::TrackList(value) => {
                             obj.set_audio_and_video_tracks_dropdown(value).await;
-                        }
-                        ListenEvent::Volume(value) => {
-                            obj.volume_cb(value);
-                        }
-                        ListenEvent::Speed(value) => {
-                            obj.speed_cb(value);
-                        }
-                        ListenEvent::Shutdown => {
-                            obj.on_shutdown();
                         }
                         ListenEvent::DemuxerCacheTime(value) => {
                             obj.on_cache_time_update(value);
@@ -1252,7 +1359,9 @@ impl MPVPage {
         if !imp.video_scale.is_dragging() {
             imp.video_scale.set_value(value as f64);
         }
-        self.update_skip_segment_button(value as f64);
+        if imp.file_loaded.get() {
+            self.update_skip_segment_button(value as f64);
+        }
 
         if let Some(time_millis) = imp
             .danmaku_sync
@@ -1307,20 +1416,33 @@ impl MPVPage {
         imp.volume_button.set_icon_name(icon_name);
     }
 
+    fn on_start_file(&self) {
+        let imp = self.imp();
+        if let Some(MpvLoad::Issued(generation)) = imp.mpv_load.get() {
+            imp.mpv_load.set(Some(MpvLoad::Started(generation)));
+            // A stop sent before StartFile can remove the entry without a lifecycle event.
+            if !self.request_is_current(generation) {
+                imp.video.stop();
+            }
+        }
+    }
+
     fn on_file_loaded(&self) {
         let imp = self.imp();
-        imp.file_loaded.set(true);
+        if imp.file_loaded.replace(true) {
+            return;
+        }
         imp.media_source_fallback.take();
-
-        if imp.danmaku_popover_content.enabled() && self.has_danmaku() {
-            imp.danmakw.set_visible(true);
+        if let Some(suburl) = imp.suburl.take() {
+            imp.video.add_sub(&suburl);
         }
+        self.playback_started();
+    }
 
-        if let Some(suburl) = imp.suburl.borrow().as_ref() {
-            imp.video.add_sub(suburl);
-        }
-        self.notify_playing();
-        self.update_timeout();
+    fn playback_started(&self) {
+        let imp = self.imp();
+        self.on_pause_update(imp.video.paused());
+        self.update_danmaku_rendering(imp.danmaku_popover_content.enabled());
         self.handle_callback(BackType::Start);
     }
 
@@ -1330,7 +1452,7 @@ impl MPVPage {
         imp.loading_box.set_visible(seeking);
         imp.spinner.set_visible(seeking);
 
-        if !imp.file_loaded.get() || !imp.danmaku_popover_content.enabled() {
+        if !self.playback_ready() || !imp.danmaku_popover_content.enabled() {
             return;
         }
 
@@ -1351,12 +1473,44 @@ impl MPVPage {
         self.imp().seeking.get()
     }
 
+    fn finish_mpv_load(&self) -> Option<u64> {
+        let imp = self.imp();
+        let Some(MpvLoad::Started(generation)) = imp.mpv_load.get() else {
+            return None;
+        };
+        imp.mpv_load.set(None);
+        imp.file_loaded.set(false);
+        if self.request_is_current(generation) {
+            return Some(generation);
+        }
+        if let Some(url) = imp.pending_url.take()
+            && self.request_is_current(imp.play_generation.get())
+        {
+            self.load_mpv_file(url);
+        }
+        None
+    }
+
     fn on_end_file(&self, value: u32) {
+        let Some(generation) = self.finish_mpv_load() else {
+            return;
+        };
+        self.remove_timeout();
+        self.update_seeking(false, 0.0);
+        self.update_danmaku_rendering(false);
+        self.imp().video.update_paused(true);
+        self.set_paused(true);
+        if value == 0 {
+            self.on_playback_ended(generation);
+        }
+    }
+
+    fn on_playback_ended(&self, generation: u64) {
         spawn(glib::clone!(
             #[weak(rename_to = obj)]
             self,
             async move {
-                if value == 0 {
+                if obj.request_is_current(generation) {
                     match SETTINGS.mpv_action_after_video_end() {
                         0 => obj.on_next_video().await,
                         2 => obj.on_stop_clicked(),
@@ -1368,22 +1522,22 @@ impl MPVPage {
     }
 
     fn on_error(&self, value: &str) {
+        let Some(generation) = self.finish_mpv_load() else {
+            return;
+        };
         if value.contains("-13")
             && let Some(fallback) = self.imp().media_source_fallback.take()
         {
             tracing::info!("Direct media path failed; retrying through the media server");
             match fallback {
-                MediaSourceFallback::DirectPlay(url) => self
-                    .imp()
-                    .video
-                    .play(&url, self.imp().last_playback_position.get()),
+                MediaSourceFallback::DirectPlay(url) => self.load_mpv_file(url),
                 MediaSourceFallback::PlaybackInfo => {
                     let error = value.to_owned();
                     spawn(glib::clone!(
                         #[weak(rename_to = obj)]
                         self,
                         async move {
-                            obj.retry_fallback(error).await;
+                            obj.retry_fallback(error, generation).await;
                         }
                     ));
                 }
@@ -1393,13 +1547,15 @@ impl MPVPage {
         self.fail_playback(value);
     }
 
-    async fn retry_fallback(&self, original_error: String) {
+    async fn retry_fallback(&self, original_error: String, generation: u64) {
+        if !self.request_is_current(generation) {
+            return;
+        }
         let Some(back) = self.imp().back.borrow().as_ref().cloned() else {
             self.fail_playback(&original_error);
             return;
         };
         let item_id = back.id;
-        let requested_item_id = item_id.to_owned();
         let media_source_id = back.mediasourceid;
         let requested_media_source_id = media_source_id.to_owned();
         let live_stream_id = back.livestreamid;
@@ -1409,11 +1565,7 @@ impl MPVPage {
                 .await
         })
         .await;
-        if self
-            .current_video()
-            .as_ref()
-            .is_none_or(|item| item.id() != requested_item_id)
-        {
+        if !self.request_is_current(generation) {
             return;
         }
         let playback_info = match playback_info {
@@ -1452,12 +1604,14 @@ impl MPVPage {
             back.livestreamid = media_source.live_stream_id;
             back.playmethod = playmethod;
         }
-        self.imp()
-            .video
-            .play(fallback_url, self.imp().last_playback_position.get());
+        self.load_mpv_file(fallback_url.to_owned());
     }
 
     pub fn on_pause_update(&self, value: bool) {
+        self.set_paused(value);
+        if !self.playback_ready() {
+            return;
+        }
         if !value {
             self.update_timeout();
             self.notify_playing();
@@ -1465,8 +1619,6 @@ impl MPVPage {
             self.remove_timeout();
             self.notify_player_paused();
         }
-
-        self.set_paused(value);
     }
 
     fn on_cache_speed_update(&self, value: i64) {
@@ -1625,18 +1777,29 @@ impl MPVPage {
 
     #[template_callback]
     pub fn on_stop_clicked(&self) {
-        self.imp().file_loaded.set(false);
-        self.imp().media_source_fallback.take();
-        self.imp().danmakw.set_visible(false);
+        let imp = self.imp();
+        let current_video = self.current_video();
+        let back = self.position_back();
+        let generation = self.next_play_generation();
+        self.set_current_video(None::<TuItem>);
+        imp.media_source_fallback.take();
         self.remove_timeout();
         self.reset_skippable_segments();
         self.next_danmaku_generation();
-        self.clear_danmaku(DanmakuPopoverStatus::Idle);
-        let current_video = self.current_video();
-
-        let video = &self.imp().video;
-        video.player().pause(true);
-        video.stop();
+        self.update_danmaku_rendering(false);
+        self.update_seeking(false, 0.0);
+        self.set_paused(true);
+        if imp.file_loaded.get() {
+            imp.video.park_cached();
+        } else {
+            imp.back.take();
+            self.clear_danmaku(DanmakuPopoverStatus::Idle);
+            self.cancel_mpv_load();
+        }
+        if let Some(timeout) = imp.timeout.take() {
+            timeout.remove();
+        }
+        self.set_reveal_overlay(true);
         let root = self.root();
         let window = root
             .and_downcast_ref::<crate::ui::widgets::window::Window>()
@@ -1645,19 +1808,22 @@ impl MPVPage {
         window.allow_suspend();
         window.refresh_homepage_if_needed();
 
-        spawn_g_timeout(glib::clone!(
+        spawn(glib::clone!(
             #[weak(rename_to = obj)]
             self,
             #[weak]
             window,
             async move {
-                if let Some(timeout) = obj.imp().timeout.take() {
-                    glib::source::SourceId::remove(timeout);
+                // Report the stopped file's progress before refreshing item state.
+                if let Some(back) = back {
+                    let _ = spawn_tokio(async move {
+                        JELLYFIN_CLIENT.position_back(&back, BackType::Stop).await
+                    })
+                    .await;
                 }
-                obj.set_reveal_overlay(true);
-                // Wait for stop progress to land before refreshing item state
-                obj.handle_callback_sync(BackType::Stop).await;
-                if let Some(current_video) = current_video {
+                if obj.request_is_current(generation)
+                    && let Some(current_video) = current_video
+                {
                     window.update_item_page(current_video).await;
                 }
             }
@@ -1671,8 +1837,13 @@ impl MPVPage {
     }
 
     fn position_back(&self) -> Option<Back> {
-        let position = self.imp().last_playback_position.get();
-        let mut back = self.imp().back.borrow().as_ref()?.to_owned();
+        let imp = self.imp();
+        self.current_video()?;
+        if !self.request_is_current(imp.play_generation.get()) {
+            return None;
+        }
+        let position = imp.last_playback_position.get();
+        let mut back = imp.back.borrow().as_ref()?.to_owned();
         back.tick = position as u64 * 10000000;
         Some(back)
     }
@@ -1682,14 +1853,6 @@ impl MPVPage {
             crate::utils::spawn_tokio_without_await(async move {
                 let _ = JELLYFIN_CLIENT.position_back(&back, backtype).await;
             });
-        }
-    }
-
-    async fn handle_callback_sync(&self, backtype: BackType) {
-        if let Some(back) = self.position_back() {
-            let _ =
-                spawn_tokio(async move { JELLYFIN_CLIENT.position_back(&back, backtype).await })
-                    .await;
         }
     }
 

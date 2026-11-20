@@ -1,6 +1,9 @@
 use std::cell::Cell;
 
-use crate::client::jellyfin_client::JELLYFIN_CLIENT;
+use crate::{
+    client::jellyfin_client::JELLYFIN_CLIENT,
+    ui::models::SETTINGS,
+};
 
 use adw::{
     prelude::*,
@@ -99,10 +102,32 @@ impl MPVPlaySink {
 
         imp.position.set(start_seconds);
         imp.paused.set(false);
+        self.resume_cache_fill();
 
         player.set_start(start_seconds);
         player.load_video(&url);
         player.pause(false);
+    }
+
+    pub fn park_cached(&self) {
+        self.imp().paused.set(true);
+        self.player().pause(true);
+        // mpv uses the larger of these two readahead limits when caching.
+        self.player().set_cache_secs(0.0);
+        self.set_property("demuxer-readahead-secs", 0.0);
+    }
+
+    pub fn resume_cached(&self, start_seconds: f64) {
+        self.resume_cache_fill();
+        self.set_position(start_seconds);
+        self.imp().paused.set(false);
+        self.player().pause(false);
+    }
+
+    fn resume_cache_fill(&self) {
+        self.set_property("demuxer-readahead-secs", 1.0);
+        self.player()
+            .set_cache_secs(SETTINGS.mpv_cache_time() as f64);
     }
 
     pub fn add_sub(&self, url: &str) {
