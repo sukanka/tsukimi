@@ -59,7 +59,9 @@ jobs:
     nightly:
       name: Nightly Release
       runs-on: ubuntu-latest
-      if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+      if: >-
+        ${{ github.event_name == 'push' &&
+          (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master') }}
       steps:
         - name: Download artifacts
           uses: actions/download-artifact@v8
