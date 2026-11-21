@@ -264,6 +264,7 @@ msgid "Video Player"
 msgstr ""
 
 #: crates/tsukimi/resources/ui/account_settings.ui:423
+#: crates/tsukimi/resources/ui/account_settings.ui:520
 msgid "Requires restart"
 msgstr ""
 
@@ -285,14 +286,14 @@ msgid "Auto"
 msgstr ""
 
 #: crates/tsukimi/resources/ui/account_settings.ui:519
-msgid "HDR (Experimental)"
+msgid "HDR"
 msgstr ""
 
-#: crates/tsukimi/resources/ui/account_settings.ui:522
-msgid "Rec. 2100"
+#: crates/tsukimi/resources/ui/account_settings.ui:523
+msgid "Force GTK HDR rendering"
 msgstr ""
 
-#: crates/tsukimi/resources/ui/account_settings.ui:531
+#: crates/tsukimi/resources/ui/account_settings.ui:532
 msgid "Preferred Version"
 msgstr ""
 

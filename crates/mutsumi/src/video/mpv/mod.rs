@@ -2,7 +2,9 @@ use std::ptr;
 
 mod actor;
 mod area;
+mod color;
 mod contexted;
+pub(crate) mod host_color;
 mod logging;
 mod paintable;
 mod proxy;

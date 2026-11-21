@@ -11,16 +11,41 @@ pub fn force_gl_renderer() {
     }
 }
 
+/// Enable GTK's Wayland color management before initializing GTK.
+///
+/// # Safety
+/// Call before starting threads because this changes the process environment.
+pub unsafe fn enable_color_management() {
+    unsafe { enable_gdk_debug_flag("color-mgmt") };
+}
+
+/// Force GTK's HDR renderer for troubleshooting.
 pub fn enable_gdk_hdr() {
     unsafe {
-        std::env::set_var("GDK_DEBUG", "hdr:color-mgmt");
+        enable_color_management();
+        enable_gdk_debug_flag("hdr");
     }
 }
 
-fn gdk_hdr_enabled() -> bool {
-    std::env::var("GDK_DEBUG")
-        .map(|v| v.contains("hdr"))
-        .unwrap_or(false)
+unsafe fn enable_gdk_debug_flag(flag: &str) {
+    let mut flags = std::env::var_os("GDK_DEBUG").unwrap_or_default();
+    // GLib treats the tokens following `all` as exclusions.
+    if flags
+        .to_string_lossy()
+        .split([':', ';', ',', ' ', '\t', '\n'])
+        .any(|value| {
+            [flag, "all", "help"]
+                .iter()
+                .any(|name| value.eq_ignore_ascii_case(name))
+        })
+    {
+        return;
+    }
+    if !flags.is_empty() {
+        flags.push(":");
+    }
+    flags.push(flag);
+    unsafe { std::env::set_var("GDK_DEBUG", flags) };
 }
 
 pub fn init() {

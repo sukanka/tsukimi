@@ -343,7 +343,7 @@
     </key>
 
     <key name="is-rec2100-pq-enabled" type="b">
-      <summary>Whether the rec2100 PQ is enabled</summary>
+      <summary>Force GTK HDR rendering</summary>
       <default>false</default>
     </key>
   </schema>

@@ -19,7 +19,10 @@ use super::backend::{
 };
 
 mod imp {
-    use std::cell::Cell;
+    use std::cell::{
+        Cell,
+        RefCell,
+    };
 
     use adw::{
         prelude::*,
@@ -37,7 +40,10 @@ mod imp {
     };
 
     use super::*;
-    use crate::video::layout::MutsumiVideoLayout;
+    use crate::video::{
+        layout::MutsumiVideoLayout,
+        mpv::host_color::HostColorFeedback,
+    };
 
     #[derive(Default, CompositeTemplate, glib::Properties)]
     #[template(resource = "/io/github/mutsumiuniverse/mutsumi/ui/video_player.ui")]
@@ -45,6 +51,7 @@ mod imp {
     pub struct MutsumiVideoPlayer {
         pub backend: MutsumiVideoSink,
         last_viewport: Cell<Viewport>,
+        color_feedback: RefCell<Option<HostColorFeedback>>,
         #[template_child]
         picture: TemplateChild<gtk::Picture>,
     }
@@ -120,7 +127,20 @@ mod imp {
         }
     }
 
-    impl WidgetImpl for MutsumiVideoPlayer {}
+    impl WidgetImpl for MutsumiVideoPlayer {
+        fn realize(&self) {
+            self.parent_realize();
+            if let Some(surface) = self.obj().native().and_then(|native| native.surface()) {
+                self.color_feedback
+                    .replace(HostColorFeedback::new(&surface));
+            }
+        }
+
+        fn unrealize(&self) {
+            self.color_feedback.take();
+            self.parent_unrealize();
+        }
+    }
     impl BinImpl for MutsumiVideoPlayer {}
 }
 

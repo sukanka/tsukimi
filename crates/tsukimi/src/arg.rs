@@ -93,10 +93,12 @@ impl Args {
         }
     }
 
-    fn init_rec2100_pq(&self) {
-        if crate::ui::SETTINGS.rec2100_pq_enabled() {
+    fn init_color_management(&self) {
+        if crate::ui::SETTINGS.force_gtk_hdr() {
             mutsumi::enable_gdk_hdr();
-            info!("Rec. 2100 enabled");
+            info!("GTK HDR renderer forced");
+        } else {
+            unsafe { mutsumi::enable_color_management() };
         }
     }
 
@@ -132,7 +134,7 @@ impl Args {
         self.init_tracing_subscriber();
         self.init_gsk_renderer();
         self.init_glib_to_tracing();
-        self.init_rec2100_pq();
+        self.init_color_management();
 
         std::panic::set_hook(Box::new(|info| {
             if let Some(s) = info.payload().downcast_ref::<&str>() {

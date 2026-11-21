@@ -20,16 +20,19 @@ use gtk::gdk;
 
 mod imp {
     use crate::{
+        DmabufFrame,
         FRAME_CHANNEL,
         FrameCallbacks,
         ShmMemoryFormat,
         SurfaceContentUpdate,
         SurfaceUpdate,
         create_mpv_proxy,
-        gdk_hdr_enabled,
         video::{
             MutsumiMpvError,
-            mpv::contexted::ContextedMPV,
+            mpv::{
+                color::ColorDescription,
+                contexted::ContextedMPV,
+            },
         },
     };
     #[cfg(feature = "profiling")]
@@ -37,7 +40,10 @@ mod imp {
     use std::{
         cell::RefCell,
         os::fd::AsRawFd,
-        sync::OnceLock,
+        sync::{
+            Arc,
+            OnceLock,
+        },
     };
 
     #[cfg(feature = "profiling")]
@@ -50,15 +56,85 @@ mod imp {
 
     use glib::subclass::Signal;
     use gtk::{
-        gdk::ColorState,
         glib,
         prelude::*,
     };
+
+    enum FramePixels {
+        Dmabuf(Arc<DmabufFrame>),
+        Shm {
+            width: i32,
+            height: i32,
+            stride: usize,
+            format: gdk::MemoryFormat,
+            bytes: glib::Bytes,
+        },
+    }
+
+    struct VideoFrame {
+        surface_id: u64,
+        color: ColorDescription,
+        pixels: FramePixels,
+    }
+
+    impl VideoFrame {
+        fn texture(&self) -> Result<gdk::Texture, glib::Error> {
+            match &self.pixels {
+                FramePixels::Dmabuf(frame) => {
+                    #[cfg(feature = "profiling")]
+                    profiling::mark(frame.profile_frame_id, Stage::TextureBuildStarted);
+                    let color = self.color.to_gdk_dmabuf_color_state(frame.format);
+                    let mut builder = gdk::DmabufTextureBuilder::new()
+                        .set_display(
+                            &gdk::Display::default().expect("Could not connect to display"),
+                        )
+                        .set_width(frame.width)
+                        .set_height(frame.height)
+                        .set_fourcc(frame.format)
+                        .set_modifier(frame.modifier)
+                        .set_color_state(color.as_ref())
+                        .set_n_planes(frame.planes.len() as u32);
+                    for (i, plane) in frame.planes.iter().enumerate() {
+                        builder = unsafe { builder.set_fd(i as u32, plane.fd.as_raw_fd()) }
+                            .set_offset(i as u32, plane.offset)
+                            .set_stride(i as u32, plane.stride);
+                    }
+                    let texture = unsafe { builder.build() }?;
+                    // Textures built from the same frame share its buffer lease.
+                    unsafe { texture.set_data("mutsumi-dmabuf-frame", Arc::clone(frame)) };
+                    #[cfg(feature = "profiling")]
+                    profiling::mark(frame.profile_frame_id, Stage::TextureBuilt);
+                    Ok(texture)
+                }
+                FramePixels::Shm {
+                    width,
+                    height,
+                    stride,
+                    format,
+                    bytes,
+                } => {
+                    let color = self
+                        .color
+                        .to_gdk_color_state()
+                        .unwrap_or_else(|_| gdk::ColorState::srgb());
+                    Ok(gdk::MemoryTextureBuilder::new()
+                        .set_width(*width)
+                        .set_height(*height)
+                        .set_stride(*stride)
+                        .set_format(*format)
+                        .set_bytes(Some(bytes))
+                        .set_color_state(&color)
+                        .build())
+                }
+            }
+        }
+    }
 
     #[derive(Default)]
     pub struct MutsumiVideoSink {
         pub mpv: ContextedMPV,
         pub texture: RefCell<Option<gdk::Texture>>,
+        frame: RefCell<Option<VideoFrame>>,
         pub frame_callbacks: RefCell<Vec<FrameCallbacks>>,
         #[cfg(feature = "profiling")]
         pub pending_snapshot_frame_id: Cell<Option<u64>>,
@@ -79,107 +155,21 @@ mod imp {
 
             self.setup_mpv();
 
-            let color_state = if gdk_hdr_enabled() {
-                Some(ColorState::rec2100_pq())
-            } else {
-                None
-            };
-
             glib::spawn_future_local(glib::clone!(
                 #[weak]
                 obj,
                 async move {
                     while let Ok(update) = FRAME_CHANNEL.rx.recv_async().await {
-                        let SurfaceUpdate {
-                            content,
-                            frame_callbacks,
-                        } = update;
-
-                        match content {
-                            SurfaceContentUpdate::Frame(frame) => {
-                                #[cfg(feature = "profiling")]
-                                let profile_frame_id = frame.profile_frame_id;
-                                #[cfg(feature = "profiling")]
-                                profiling::mark(profile_frame_id, Stage::TextureBuildStarted);
-
-                                let previous = obj.imp().texture.borrow();
-
-                                let mut builder = gdk::DmabufTextureBuilder::new()
-                                    .set_display(
-                                        &gdk::Display::default()
-                                            .expect("Could not connect to display"),
-                                    )
-                                    .set_width(frame.width)
-                                    .set_height(frame.height)
-                                    .set_fourcc(frame.format)
-                                    .set_modifier(frame.modifier)
-                                    .set_color_state(color_state.as_ref())
-                                    .set_n_planes(frame.planes.len() as u32);
-
-                                drop(previous);
-
-                                for (i, plane) in frame.planes.iter().enumerate() {
-                                    builder =
-                                        unsafe { builder.set_fd(i as u32, plane.fd.as_raw_fd()) }
-                                            .set_offset(i as u32, plane.offset)
-                                            .set_stride(i as u32, plane.stride);
-                                }
-
-                                match unsafe {
-                                    builder.build_with_release_func(move || drop(frame))
-                                } {
-                                    Ok(texture) => {
-                                        #[cfg(feature = "profiling")]
-                                        {
-                                            profiling::mark(profile_frame_id, Stage::TextureBuilt);
-                                            obj.imp()
-                                                .pending_snapshot_frame_id
-                                                .set(profile_frame_id);
-                                        }
-                                        obj.replace_texture(Some(texture));
-                                    }
-                                    Err(e) => {
-                                        tracing::error!("dmabuf build failed: {e}");
-                                    }
-                                }
-                            }
-                            SurfaceContentUpdate::Shm(frame) => {
-                                let bytes = glib::Bytes::from_owned(frame.data);
-                                let format = match frame.format {
-                                    ShmMemoryFormat::Argb8888 | ShmMemoryFormat::Xrgb8888 => {
-                                        gdk::MemoryFormat::B8g8r8a8Premultiplied
-                                    }
-                                };
-                                let texture = gdk::MemoryTexture::new(
-                                    frame.width,
-                                    frame.height,
-                                    format,
-                                    &bytes,
-                                    frame.stride,
-                                );
-                                obj.replace_texture(Some(gdk::Texture::from(texture)));
-                            }
-                            SurfaceContentUpdate::Clear => {
-                                #[cfg(feature = "profiling")]
-                                obj.imp().pending_snapshot_frame_id.set(None);
-                                obj.replace_texture(None);
-                            }
-                            SurfaceContentUpdate::Unchanged => {}
-                        }
-
-                        if let Some(frame_callbacks) = frame_callbacks {
-                            obj.imp().frame_callbacks.borrow_mut().push(frame_callbacks);
-                        }
-
-                        obj.invalidate_contents();
+                        obj.imp().update_frame(update);
                     }
                 }
             ));
         }
 
         fn dispose(&self) {
+            self.frame.take();
             self.texture.take();
-            self.frame_callbacks.take();
+            self.finish_frame_callbacks();
             self.mpv.shutdown();
         }
 
@@ -215,14 +205,112 @@ mod imp {
                 profiling::mark(self.pending_snapshot_frame_id.take(), Stage::Snapshot);
             }
 
-            let time_ms = (glib::monotonic_time() / 1_000) as u32;
-            for frame_callbacks in self.frame_callbacks.take() {
-                frame_callbacks.done(time_ms);
-            }
+            self.finish_frame_callbacks();
         }
     }
 
     impl MutsumiVideoSink {
+        fn update_frame(&self, update: SurfaceUpdate) {
+            let SurfaceUpdate {
+                content,
+                frame_callbacks,
+                surface_id,
+                color,
+            } = update;
+            let mut frame = self.frame.borrow_mut();
+            let current = frame
+                .as_mut()
+                .filter(|frame| frame.surface_id == surface_id);
+            let color_changed = current.as_ref().is_none_or(|frame| frame.color != color);
+            let rebuild = match content {
+                SurfaceContentUpdate::Frame(pixels) => {
+                    *frame = Some(VideoFrame {
+                        surface_id,
+                        color,
+                        pixels: FramePixels::Dmabuf(Arc::new(pixels)),
+                    });
+                    true
+                }
+                SurfaceContentUpdate::Shm(pixels) => {
+                    let format = match pixels.format {
+                        ShmMemoryFormat::Argb8888 | ShmMemoryFormat::Xrgb8888 => {
+                            gdk::MemoryFormat::B8g8r8a8Premultiplied
+                        }
+                    };
+                    *frame = Some(VideoFrame {
+                        surface_id,
+                        color,
+                        pixels: FramePixels::Shm {
+                            width: pixels.width,
+                            height: pixels.height,
+                            stride: pixels.stride,
+                            format,
+                            bytes: glib::Bytes::from_owned(pixels.data),
+                        },
+                    });
+                    true
+                }
+                SurfaceContentUpdate::Clear if current.is_some() => {
+                    *frame = None;
+                    true
+                }
+                SurfaceContentUpdate::Unchanged if color_changed => {
+                    if let Some(current) = current {
+                        current.color = color;
+                        true
+                    } else {
+                        false
+                    }
+                }
+                _ => false,
+            };
+
+            let obj = self.obj();
+            if rebuild {
+                let texture = frame.as_ref().and_then(|frame| match frame.texture() {
+                    Ok(texture) => {
+                        if color_changed {
+                            tracing::debug!(color = ?frame.color, "Imported video texture color state");
+                        }
+                        Some(texture)
+                    }
+                    Err(error) => {
+                        tracing::error!(%error, "Failed to import video texture");
+                        None
+                    }
+                });
+                #[cfg(feature = "profiling")]
+                self.pending_snapshot_frame_id
+                    .set(frame.as_ref().and_then(|frame| match &frame.pixels {
+                        FramePixels::Dmabuf(pixels) if texture.is_some() => pixels.profile_frame_id,
+                        _ => None,
+                    }));
+                drop(frame);
+                obj.replace_texture(texture);
+            }
+            if let Some(frame_callbacks) = frame_callbacks {
+                self.frame_callbacks.borrow_mut().push(frame_callbacks);
+            }
+            if self.texture.borrow().is_none() {
+                self.finish_frame_callbacks();
+            }
+            obj.invalidate_contents();
+        }
+
+        fn finish_frame_callbacks(&self) {
+            let time_ms = (glib::monotonic_time() / 1_000) as u32;
+            for callbacks in self.frame_callbacks.take() {
+                callbacks.done(time_ms);
+            }
+        }
+
+        pub(super) fn discard_frame(&self) {
+            self.frame.take();
+            #[cfg(feature = "profiling")]
+            self.pending_snapshot_frame_id.set(None);
+            self.finish_frame_callbacks();
+        }
+
         fn setup_mpv(&self) {
             let display = gdk::Display::default().expect("Could not connect to display");
             let formats = display.dmabuf_formats();
@@ -308,6 +396,7 @@ impl MutsumiVideoSink {
 
     // This would be useful for clearing the video area when stopping playback, to avoid showing the last frame.
     pub fn push_an_empty_texture(&self) {
+        self.imp().discard_frame();
         let bytes = glib::Bytes::from_static(&[0, 0, 0, 0]);
 
         let texture = gdk::MemoryTexture::new(1, 1, gdk::MemoryFormat::R8g8b8a8, &bytes, 4);
@@ -371,6 +460,9 @@ impl MutsumiVideoSink {
     }
 
     pub fn shutdown(&self) {
+        self.imp().discard_frame();
+        self.replace_texture(None);
+        self.invalidate_contents();
         self.mpv().shutdown();
     }
 

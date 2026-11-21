@@ -1,3 +1,4 @@
+mod color;
 mod dmabuf;
 mod drm;
 #[cfg(feature = "profiling")]
@@ -43,6 +44,7 @@ use wl_proxy::{
     },
     protocols::{
         ObjectInterface,
+        color_management_v1::wp_color_manager_v1::WpColorManagerV1,
         drm::wl_drm::WlDrm,
         fractional_scale_v1::{
             wp_fractional_scale_manager_v1::WpFractionalScaleManagerV1,
@@ -77,6 +79,10 @@ use wl_proxy::{
 };
 
 use self::{
+    color::{
+        ColorManagementState,
+        ColorManagerHandler,
+    },
     dmabuf::{
         ALLOWED_FORMAT_PAIRS,
         BufferInfo,
@@ -94,6 +100,10 @@ use self::{
         ToplevelEntry,
         WmBaseHandler,
     },
+};
+use super::color::{
+    ColorDescription,
+    PREFERRED_COLOR,
 };
 
 enum ProxyEvent {
@@ -157,8 +167,10 @@ pub enum SurfaceContentUpdate {
 }
 
 pub struct SurfaceUpdate {
+    pub(crate) surface_id: u64,
     pub content: SurfaceContentUpdate,
     pub frame_callbacks: Option<FrameCallbacks>,
+    pub(crate) color: ColorDescription,
 }
 
 pub static FRAME_CHANNEL: Lazy<DmabufFrameChannel> = Lazy::new(|| {
@@ -208,6 +220,7 @@ impl ViewportChannel {
 }
 
 struct SharedState {
+    color_management: ColorManagementState,
     buffer_info: HashMap<u64, BufferInfo>,
     event_tx: flume::Sender<ProxyEvent>,
     frame_callbacks: HashMap<u64, Vec<Rc<WlCallback>>>,
@@ -319,6 +332,9 @@ impl WlRegistryHandler for RegistryHandler {
         } else if interface == ObjectInterface::ZwpLinuxDmabufV1 {
             self.mapper
                 .forward_global(slf, name, interface, version.min(4));
+        } else if interface == ObjectInterface::WpColorManagerV1 {
+            self.mapper
+                .forward_global(slf, name, interface, version.min(1));
         } else {
             self.mapper.forward_global(slf, name, interface, version);
         }
@@ -358,6 +374,7 @@ impl WlRegistryHandler for RegistryHandler {
             let subcompositor = id.try_downcast::<WlSubcompositor>();
             let dmabuf = id.try_downcast::<ZwpLinuxDmabufV1>();
             let drm = id.try_downcast::<WlDrm>();
+            let color_manager = id.try_downcast::<WpColorManagerV1>();
 
             self.mapper.forward_bind(slf, name, &id);
 
@@ -374,6 +391,10 @@ impl WlRegistryHandler for RegistryHandler {
             } else if let Some(drm) = drm {
                 drm.set_handler(DrmHandler {
                     state: Rc::clone(&self.state),
+                });
+            } else if let Some(manager) = color_manager {
+                manager.set_handler(ColorManagerHandler {
+                    shared: Rc::clone(&self.state),
                 });
             }
         }
@@ -426,7 +447,8 @@ fn handle_viewport_update(shared: &Rc<RefCell<SharedState>>, viewport: Viewport)
 
 async fn run_client(
     state: Rc<State>, shared: Rc<RefCell<SharedState>>, event_rx: flume::Receiver<ProxyEvent>,
-    mut viewport_rx: watch::Receiver<Option<Viewport>>, ready: &SyncSender<()>,
+    mut viewport_rx: watch::Receiver<Option<Viewport>>,
+    mut preferred_color_rx: watch::Receiver<ColorDescription>, ready: &SyncSender<()>,
 ) {
     let poll_fd = match unsafe { tokio::io::unix::AsyncFd::register(Rc::clone(state.poll_fd())) } {
         Ok(fd) => fd,
@@ -473,6 +495,13 @@ async fn run_client(
                     handle_viewport_update(&shared, viewport);
                 }
             },
+            preferred_color = preferred_color_rx.changed() => {
+                if preferred_color.is_err() {
+                    return;
+                }
+                let preferred_color = preferred_color_rx.borrow_and_update().clone();
+                shared.borrow_mut().color_management.set_preferred(preferred_color);
+            },
         }
     }
 }
@@ -503,7 +532,10 @@ fn serve_client(socket: OwnedFd, upstream: String, ready: &SyncSender<()>) {
     let (event_tx, event_rx) = flume::unbounded();
     let mut viewport_rx = VIEWPORT_CHANNEL.subscribe();
     let viewport = *viewport_rx.borrow_and_update();
+    let mut preferred_color_rx = PREFERRED_COLOR.subscribe();
+    let preferred_color = preferred_color_rx.borrow_and_update().clone();
     let shared = Rc::new(RefCell::new(SharedState {
+        color_management: ColorManagementState::new(preferred_color),
         buffer_info: HashMap::new(),
         event_tx,
         frame_callbacks: HashMap::new(),
@@ -535,6 +567,7 @@ fn serve_client(socket: OwnedFd, upstream: String, ready: &SyncSender<()>) {
         shared,
         event_rx,
         viewport_rx,
+        preferred_color_rx,
         ready,
     ));
     state.destroy();

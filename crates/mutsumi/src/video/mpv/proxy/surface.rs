@@ -207,8 +207,9 @@ struct SurfaceHandler {
 impl WlSurfaceHandler for SurfaceHandler {
     fn handle_destroy(&mut self, slf: &Rc<WlSurface>) {
         let surface_id = slf.unique_id();
-        self.shared
-            .borrow_mut()
+        let mut shared = self.shared.borrow_mut();
+        shared.color_management.remove_surface(surface_id);
+        shared
             .surfaces
             .retain(|surface| surface.unique_id() != surface_id);
         slf.delete_id();
@@ -224,8 +225,10 @@ impl WlSurfaceHandler for SurfaceHandler {
         self.pending_callbacks.push(Rc::clone(callback));
     }
 
-    fn handle_commit(&mut self, _slf: &Rc<WlSurface>) {
+    fn handle_commit(&mut self, slf: &Rc<WlSurface>) {
         let mut state = self.shared.borrow_mut();
+        let surface_id = slf.unique_id();
+        let (color, color_changed) = state.color_management.commit(surface_id);
         let callbacks = std::mem::take(&mut self.pending_callbacks);
         let frame_callbacks = if callbacks.is_empty() {
             None
@@ -272,10 +275,15 @@ impl WlSurfaceHandler for SurfaceHandler {
         };
         drop(state);
 
-        if !matches!(content, SurfaceContentUpdate::Unchanged) || frame_callbacks.is_some() {
+        if color_changed
+            || !matches!(content, SurfaceContentUpdate::Unchanged)
+            || frame_callbacks.is_some()
+        {
             let _ = FRAME_CHANNEL.tx.send(SurfaceUpdate {
+                surface_id,
                 content,
                 frame_callbacks,
+                color,
             });
         }
     }

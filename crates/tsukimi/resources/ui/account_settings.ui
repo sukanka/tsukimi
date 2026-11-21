@@ -516,10 +516,11 @@
         </child>
         <child>
           <object class="AdwPreferencesGroup">
-            <property name="description" translatable="yes">HDR (Experimental)</property>
+            <property name="title" translatable="yes">HDR</property>
+            <property name="description" translatable="yes">Requires restart</property>
             <child>
-              <object class="AdwSwitchRow" id="bt2020control">
-                <property name="title" translatable="yes">Rec. 2100</property>
+              <object class="AdwSwitchRow" id="force_gtk_hdr">
+                <property name="title" translatable="yes">Force GTK HDR rendering</property>
               </object>
             </child>
           </object>

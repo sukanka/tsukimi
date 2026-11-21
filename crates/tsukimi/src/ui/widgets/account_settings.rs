@@ -97,7 +97,7 @@ mod imp {
         #[template_child]
         pub config_switchrow: TemplateChild<adw::SwitchRow>,
         #[template_child]
-        pub bt2020control: TemplateChild<adw::SwitchRow>,
+        pub force_gtk_hdr: TemplateChild<adw::SwitchRow>,
 
         #[template_child]
         pub preferred_audio_language_comborow: TemplateChild<adw::ComboRow>,
@@ -500,7 +500,7 @@ impl AccountSettings {
             .bind("mpv-config", &imp.config_switchrow.get(), "active")
             .build();
         SETTINGS
-            .bind("is-rec2100-pq-enabled", &imp.bt2020control.get(), "active")
+            .bind("is-rec2100-pq-enabled", &imp.force_gtk_hdr.get(), "active")
             .build();
         SETTINGS
             .bind(

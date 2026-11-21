@@ -22,6 +22,7 @@ fn main() {
         .with_max_level(tracing::Level::INFO)
         .init();
 
+    unsafe { mutsumi::enable_color_management() };
     mutsumi::force_gl_renderer();
 
     gtk::init().expect("Failed to initialize GTK");

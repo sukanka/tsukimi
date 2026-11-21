@@ -33,6 +33,8 @@ quick-xml = { workspace = true, features = ["serialize"] }
 thiserror.workspace = true
 
 [target.'cfg(target_os = "linux")'.dependencies]
+wayland-client.workspace = true
+wayland-protocols = { workspace = true, features = ["client", "staging"] }
 gdk-x11 = { workspace = true, features = [
   "v4_10",
   "xlib",
@@ -42,6 +44,7 @@ gdk-wayland = { workspace = true, features = [
   "wayland_crate",
 ] }
 wl-proxy = { workspace = true, features = [
+  "protocol-color_management_v1",
   "protocol-drm",
   "protocol-linux_dmabuf_v1",
   "protocol-xdg_shell",

@@ -15,7 +15,7 @@ fn main() {
         .with_max_level(tracing::Level::INFO)
         .init();
 
-    mutsumi::enable_gdk_hdr();
+    unsafe { mutsumi::enable_color_management() };
     mutsumi::init();
     mutsumi::force_gl_renderer();
     mutsumi::set_mpv_initializer(|init| {
